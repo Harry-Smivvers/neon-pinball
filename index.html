@@ -219,6 +219,12 @@ const Sound = (() => {
       [392,494,587,740,988,1319].forEach((f,i)=>setTimeout(()=>tone(f,'sine',0.18,0.32),i*60));
       setTimeout(()=>{ tone(1760,'sine',0.25,0.5,440); noise(0.22,0.16); },370);
     },
+    scoreClick:  () => tone(900+Math.random()*600,'square',0.028,0.06),
+    megaVictory: () => {
+      [523,659,784,1047,1319,1568,2093].forEach((f,i)=>
+        setTimeout(()=>{ tone(f,'sine',0.28,0.38); if(i>3)noise(0.05,0.07); },i*90));
+      setTimeout(()=>{ tone(2093,'sine',0.35,1.2,1047); noise(0.25,0.18); },720);
+    },
   };
 })();
 
@@ -818,9 +824,13 @@ class MegaRamp {
     this.walls.forEach(w=>w.collide(ball));
     if(this.state!=='idle' || this.holeCooldown>0) return;
     if(dist(ball.x,ball.y,this.holeX,this.holeY)<this.holeR){
-      this.state='hit'; this.hitTimer=35; this.megaFlash=90;
+      this.state='hit'; this.hitTimer=35; this.megaFlash=120;
       ball.x=this.holeX; ball.y=this.holeY; ball.vx=0; ball.vy=0;
-      GS.addScore(2500); Sound.megaHit();
+      megaCountUp={active:true,remaining:50000,perFrame:2000};
+      Sound.megaHit();
+      // Initial fireworks burst around the hole
+      FW_COLS.forEach((c,i)=>setTimeout(()=>spawnFirework(
+        W*(0.05+Math.random()*0.6), H*(0.08+Math.random()*0.5), c), i*60));
     }
   }
 
@@ -912,13 +922,25 @@ let plungerX, plungerBallY;
 let slingshots, spinner, magnet, ball2;
 let multiballActive=false, multiballFlash=0, targetHitFrames=[];
 let skillZone={lo:0.4,hi:0.58}, skillShotPending=false, skillChargeAtRelease=0, skillShotFlash=0;
-let launcherSlide=0, launcherTargetSlide=0; // launcher slide-out animation
-let ballReturnTimer=0; // countdown frames before ball rolls into launcher after loss
+let launcherSlide=0, launcherTargetSlide=0;
+let ballReturnTimer=0;
+let megaCountUp={active:false,remaining:0,perFrame:2000};
+let fireworks=[];
 
 const canvas=document.getElementById('gameCanvas');
 const ctx=canvas.getContext('2d');
 
 function randomizeSkillZone(){ const lo=0.28+Math.random()*0.46; return {lo, hi:Math.min(1,lo+0.18)}; }
+
+const FW_COLS=['#ff44ff','#ffaa00','#00ffcc','#ff2d78','#44aaff','#ffffff','#ffff44'];
+function spawnFirework(x,y,col){
+  col=col||FW_COLS[~~(Math.random()*FW_COLS.length)];
+  for(let i=0;i<40;i++){
+    const a=(i/40)*PI2, spd=3+Math.random()*10;
+    fireworks.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-3,
+      life:55+~~(Math.random()*55),maxLife:110,color:col,r:2+Math.random()*3});
+  }
+}
 
 function triggerMultiball(){
   multiballActive=true; multiballFlash=120;
@@ -1087,6 +1109,25 @@ function initInput() {
 function update() {
   if(GS.paused||!GS.running||GS.over) return;
   GS.tick();
+
+  // Mega count-up: tick score each frame with a click
+  if(megaCountUp.active){
+    const add=Math.min(megaCountUp.perFrame,megaCountUp.remaining);
+    GS.score+=add; megaCountUp.remaining-=add;
+    Sound.scoreClick();
+    if(megaCountUp.remaining<=0){
+      megaCountUp.active=false;
+      Sound.megaVictory();
+      // Victory fireworks cascade
+      for(let i=0;i<10;i++) setTimeout(()=>spawnFirework(
+        W*(0.08+Math.random()*0.84), H*(0.08+Math.random()*0.65)), i*110);
+    }
+  }
+
+  // Fireworks physics
+  fireworks.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.12;p.vx*=0.97;p.vy*=0.97;p.life--;});
+  fireworks=fireworks.filter(p=>p.life>0);
+
   plunger.tick(ball);
 
   // launcher slide animation
@@ -1428,6 +1469,15 @@ function draw() {
   if(ball.active && !ball.inLane) ball.draw(ctx);
   if(multiballActive && ball2 && ball2.active) drawBall2();
   drawHUD();
+  // Fireworks on top of everything
+  fireworks.forEach(p=>{
+    const a=(p.life/p.maxLife); const r=p.r*a;
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.shadowBlur=10; ctx.shadowColor=p.color;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(0.5,r),0,PI2); ctx.fill();
+    ctx.restore();
+  });
 }
 
 // ═══════════════════════════════════════════════
@@ -1456,6 +1506,7 @@ function startGame() {
   launcherSlide=0; launcherTargetSlide=0; ballReturnTimer=0;
   multiballActive=false; multiballFlash=0;
   skillShotPending=false; skillShotFlash=0;
+  megaCountUp={active:false,remaining:0,perFrame:2000}; fireworks=[];
   buildTable();
   ovEl.classList.add('hidden');
   pauseBtn.style.display='flex';
