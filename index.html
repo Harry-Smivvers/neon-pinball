@@ -1,0 +1,1272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Pinball</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #020208;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Orbitron', monospace;
+}
+#gameContainer {
+  position: relative;
+  user-select: none;
+}
+#gameCanvas {
+  display: block;
+  touch-action: none;
+}
+#overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(5, 5, 20, 0.88);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 18px;
+  z-index: 10;
+}
+#overlay.hidden { display: none; }
+.ov-title {
+  font-size: clamp(1.4em, 5vw, 2.8em);
+  font-weight: 900;
+  color: #ff2d78;
+  text-shadow: 0 0 20px #ff2d78, 0 0 50px #ff2d78aa;
+  letter-spacing: 4px;
+  text-align: center;
+}
+.ov-score {
+  font-size: clamp(0.7em, 2.5vw, 1.1em);
+  color: #39ff14;
+  text-shadow: 0 0 10px #39ff14;
+  letter-spacing: 2px;
+}
+.ov-btn {
+  background: transparent;
+  border: 2px solid #00e5ff;
+  color: #00e5ff;
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(0.75em, 2.5vw, 1em);
+  padding: 12px 36px;
+  cursor: pointer;
+  text-shadow: 0 0 10px #00e5ff;
+  box-shadow: 0 0 15px #00e5ff44, inset 0 0 15px #00e5ff11;
+  letter-spacing: 3px;
+  transition: all 0.15s;
+  border-radius: 2px;
+}
+.ov-btn:hover, .ov-btn:active {
+  background: #00e5ff22;
+  box-shadow: 0 0 30px #00e5ff88, inset 0 0 20px #00e5ff22;
+}
+.ov-menu-btn {
+  border-color: #9b30ff;
+  color: #9b30ff;
+  text-shadow: 0 0 10px #9b30ff;
+  box-shadow: 0 0 15px #9b30ff44;
+  padding: 8px 24px;
+}
+.ov-menu-btn:hover { background: #9b30ff22; }
+.ov-credits {
+  font-size: clamp(0.5em, 1.5vw, 0.65em);
+  color: #9b30ff99;
+  letter-spacing: 1px;
+  margin-top: 8px;
+  text-align: center;
+}
+.ov-build {
+  font-size: clamp(0.4em, 1.2vw, 0.55em);
+  color: #00ffcc;
+  letter-spacing: 2px;
+  margin-top: 4px;
+  text-align: center;
+  text-shadow: 0 0 8px #00ffcc;
+}
+.ov-controls {
+  font-size: clamp(0.45em, 1.4vw, 0.6em);
+  color: #ffffff55;
+  letter-spacing: 1px;
+  text-align: center;
+  line-height: 1.7;
+}
+#pauseBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: 1px solid #9b30ff88;
+  color: #9b30ff;
+  font-size: 1em;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  padding: 0;
+  line-height: 1;
+}
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas"></canvas>
+  <button id="pauseBtn">⏸</button>
+  <div id="overlay">
+    <div class="ov-title" id="ovTitle">NEON PINBALL</div>
+    <div class="ov-score" id="ovScore"></div>
+    <div class="ov-score" id="ovHigh"></div>
+    <button class="ov-btn" id="ovPlayBtn">PLAY</button>
+    <button class="ov-btn ov-menu-btn" id="ovMenuBtn" style="display:none">MENU</button>
+    <div class="ov-controls" id="ovControls">
+      LEFT SHIFT · RIGHT SHIFT = Flippers &nbsp;|&nbsp; ↓ Hold = Plunger<br>
+      T = Tilt &nbsp;|&nbsp; SPACE / P / ESC = Pause
+    </div>
+    <div class="ov-credits">Created by Arry Smivvers Studios</div>
+    <div class="ov-build" id="ovBuild"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const BUILD = 2026001;
+
+// ═══════════════════════════════════════════════
+// SOUND
+// ═══════════════════════════════════════════════
+const Sound = (() => {
+  let ac = null;
+  const init = () => {
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+  };
+  const resume = () => { if (ac && ac.state === 'suspended') ac.resume(); };
+
+  function tone(freq, type, dur, vol = 0.28, freqEnd = null) {
+    if (!ac) return;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type = type;
+    o.frequency.setValueAtTime(freq, ac.currentTime);
+    if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, ac.currentTime + dur);
+    g.gain.setValueAtTime(vol, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    o.start(); o.stop(ac.currentTime + dur);
+  }
+
+  function noise(dur, vol = 0.12) {
+    if (!ac) return;
+    const sz = Math.ceil(ac.sampleRate * dur);
+    const buf = ac.createBuffer(1, sz, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < sz; i++) d[i] = Math.random() * 2 - 1;
+    const s = ac.createBufferSource(), g = ac.createGain();
+    s.buffer = buf; s.connect(g); g.connect(ac.destination);
+    g.gain.setValueAtTime(vol, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    s.start(); s.stop(ac.currentTime + dur);
+  }
+
+  return {
+    init, resume,
+    flipper:  () => tone(220, 'square', 0.07, 0.18),
+    bumper:   () => { tone(140, 'triangle', 0.11, 0.28, 70); noise(0.09, 0.1); },
+    target:   () => tone(440, 'sine', 0.1, 0.22, 880),
+    ramp:     () => tone(550, 'sine', 0.13, 0.18, 1100),
+    launch:        () => tone(280, 'sawtooth', 0.32, 0.22, 70),
+    plungerCatch:  () => { noise(0.05, 0.28); tone(95, 'triangle', 0.38, 0.22, 55); tone(410, 'sine', 0.5, 0.10, 370); },
+    ballDrop: () => {
+      // Heavy metallic impact — ball clanks into metal box, two smaller bounces
+      noise(0.065, 0.40); tone(85, 'triangle', 0.55, 0.30, 48); tone(360, 'sine', 0.9, 0.13, 300);
+      setTimeout(() => { noise(0.04, 0.20); tone(110, 'triangle', 0.32, 0.16, 72); }, 170);
+      setTimeout(() => { noise(0.025, 0.10); tone(160, 'triangle', 0.22, 0.09, 110); }, 310);
+    },
+    ballReturn: () => {
+      // Mechanical solenoid click, then ball rolls into lane
+      noise(0.03, 0.24); tone(145, 'square', 0.09, 0.26, 72);
+      setTimeout(() => { tone(240, 'sine', 0.22, 0.08, 190); noise(0.14, 0.05); }, 85);
+    },
+    tilt:     () => { tone(90, 'square', 0.28, 0.22); noise(0.18, 0.14); },
+    bonus:    () => [523,659,784,1047].forEach((f,i) => setTimeout(() => tone(f,'sine',0.14,0.28), i*80)),
+    gameOver: () => [523,494,440,392,349].forEach((f,i) => setTimeout(() => tone(f,'sine',0.22,0.24), i*160)),
+    milestone:      () => [523,659,784].forEach((f,i) => setTimeout(() => tone(f,'sine',0.11,0.2), i*65)),
+    kickback:       () => { tone(180,'sawtooth',0.06,0.32); tone(90,'square',0.12,0.26,45); noise(0.08,0.18); },
+    kickbackCharge: () => { tone(660,'sine',0.1,0.14); tone(880,'sine',0.08,0.1,0.04); },
+    megaHit:        () => {
+      [392,494,587,740,988,1319].forEach((f,i)=>setTimeout(()=>tone(f,'sine',0.18,0.32),i*60));
+      setTimeout(()=>{ tone(1760,'sine',0.25,0.5,440); noise(0.22,0.16); },370);
+    },
+  };
+})();
+
+// ═══════════════════════════════════════════════
+// MATH
+// ═══════════════════════════════════════════════
+const dist2 = (ax,ay,bx,by) => (ax-bx)**2 + (ay-by)**2;
+const dist  = (ax,ay,bx,by) => Math.sqrt(dist2(ax,ay,bx,by));
+
+function closestPtSeg(px,py, ax,ay, bx,by) {
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+  if (l2===0) return {x:ax,y:ay};
+  const t = Math.max(0, Math.min(1, ((px-ax)*dx+(py-ay)*dy)/l2));
+  return {x:ax+t*dx, y:ay+t*dy};
+}
+
+function reflectVel(vx,vy, nx,ny) {
+  const d = 2*(vx*nx+vy*ny);
+  return {x:vx-d*nx, y:vy-d*ny};
+}
+
+// ═══════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════
+const GS = {
+  score:0, balls:3, multiplier:1, multTimer:0,
+  tiltCount:0, tiltLocked:false, tiltLockTimer:0,
+  paused:false, running:false, over:false,
+  hi: +( localStorage.getItem('npin_hi')||0 ),
+  tiltFlash:0, scoreFlash:0, scoreFlashVal:0,
+
+  addScore(pts) {
+    const v = pts * this.multiplier;
+    const prev = this.score;
+    this.score += v;
+    this.scoreFlash = 40; this.scoreFlashVal = v;
+    if (Math.floor(this.score/5000) > Math.floor(prev/5000)) Sound.milestone();
+  },
+
+  setMult(m) {
+    this.multiplier = m; this.multTimer = 600;
+    Sound.bonus();
+  },
+
+  doTilt() {
+    if (this.tiltLocked) return;
+    this.tiltCount++; this.tiltFlash = 70; Sound.tilt();
+    if (this.tiltCount >= 3) { this.tiltLocked=true; this.tiltLockTimer=120; }
+  },
+
+  tick() {
+    if (this.multTimer > 0 && --this.multTimer === 0) this.multiplier=1;
+    if (this.tiltFlash > 0) this.tiltFlash--;
+    if (this.scoreFlash > 0) this.scoreFlash--;
+    if (this.tiltLocked && --this.tiltLockTimer <= 0) { this.tiltLocked=false; this.tiltCount=0; }
+  },
+
+  reset() {
+    Object.assign(this, {score:0,balls:3,multiplier:1,multTimer:0,
+      tiltCount:0,tiltLocked:false,tiltLockTimer:0,
+      paused:false,running:false,over:false,tiltFlash:0,scoreFlash:0,scoreFlashVal:0});
+  },
+
+  saveHi() {
+    if (this.score > this.hi) { this.hi = this.score; localStorage.setItem('npin_hi', this.hi); }
+  }
+};
+
+// ═══════════════════════════════════════════════
+// BALL
+// ═══════════════════════════════════════════════
+class Ball {
+  constructor(r) {
+    this.r=r; this.x=0; this.y=0; this.vx=0; this.vy=0;
+    this.active=false; this.inLane=true; this.trail=[];
+  }
+  reset(x,y) { this.x=x; this.y=y; this.vx=0; this.vy=0; this.active=false; this.inLane=true; this.trail=[]; }
+  update() {
+    if (!this.active) return;
+    if (GS.tiltFlash > 60) { this.vx+=(Math.random()-.5)*2.5; this.vy+=(Math.random()-.5)*2.5; }
+    this.vy += GRAVITY;
+    const sp = Math.hypot(this.vx, this.vy);
+    if (sp > MAX_SPEED) { this.vx=this.vx/sp*MAX_SPEED; this.vy=this.vy/sp*MAX_SPEED; }
+    this.trail.push({x:this.x,y:this.y});
+    if (this.trail.length>9) this.trail.shift();
+    // movement done externally in substeps
+  }
+  draw(ctx) {
+    if (!this.active && this.x===0) return;
+    // trail
+    for (let i=0;i<this.trail.length;i++) {
+      const a=(i/this.trail.length)*0.25;
+      const tr=this.r*(i/this.trail.length)*0.8;
+      ctx.beginPath();
+      ctx.arc(this.trail[i].x,this.trail[i].y,tr,0,PI2);
+      ctx.fillStyle=`rgba(180,210,255,${a})`;
+      ctx.fill();
+    }
+    const g=ctx.createRadialGradient(this.x-this.r*.35,this.y-this.r*.35,this.r*.08,this.x,this.y,this.r);
+    g.addColorStop(0,'#ffffff'); g.addColorStop(.45,'#ccdeff'); g.addColorStop(1,'#4466bb');
+    ctx.save();
+    ctx.shadowBlur=14; ctx.shadowColor='#88aaff';
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,PI2);
+    ctx.fillStyle=g; ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// FLIPPER
+// ═══════════════════════════════════════════════
+class Flipper {
+  constructor(px,py,len,isLeft) {
+    this.px=px; this.py=py; this.len=len; this.isLeft=isLeft;
+    this.rest = isLeft ?  0.45 : Math.PI-0.45;
+    this.act  = isLeft ? -0.45 : Math.PI+0.45;
+    this.ang  = this.rest;
+    this.angV = 0;
+    this.pressed=false;
+  }
+  get tx() { return this.px + Math.cos(this.ang)*this.len; }
+  get ty() { return this.py + Math.sin(this.ang)*this.len; }
+
+  update() {
+    const tgt = this.pressed ? this.act : this.rest;
+    const spd = this.pressed ? 0.22 : 0.15;
+    const diff= tgt - this.ang;
+    this.angV = diff * spd * 10;
+    this.ang += diff * spd;
+  }
+
+  collide(ball) {
+    const cp = closestPtSeg(ball.x,ball.y, this.px,this.py, this.tx,this.ty);
+    const d  = dist(ball.x,ball.y,cp.x,cp.y);
+    if (d < ball.r + 1) {
+      const nx=(ball.x-cp.x)/d, ny=(ball.y-cp.y)/d;
+      ball.x=cp.x+nx*(ball.r+2); ball.y=cp.y+ny*(ball.r+2);
+      const rv = reflectVel(ball.vx,ball.vy,nx,ny);
+      const kick = this.angV * this.len * 0.55;
+      ball.vx = rv.x*0.72 + (-Math.sin(this.ang)*kick);
+      ball.vy = rv.y*0.72 + ( Math.cos(this.ang)*kick);
+      if (Math.abs(this.angV)>0.6) Sound.flipper();
+    }
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.lineCap='round';
+    ctx.lineWidth = W*0.031;
+    ctx.strokeStyle='#00e5ff';
+    ctx.shadowBlur=18; ctx.shadowColor='#00e5ff';
+    ctx.beginPath(); ctx.moveTo(this.px,this.py); ctx.lineTo(this.tx,this.ty);
+    ctx.stroke();
+    // pivot dot
+    ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(this.px,this.py,W*0.013,0,PI2);
+    ctx.fillStyle='#00e5ff'; ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// BUMPER
+// ═══════════════════════════════════════════════
+class Bumper {
+  constructor(x,y,r,oscAmp=0,oscSpeed=0) {
+    this.x=x;this.y=y;this.r=r;this.hit=0;
+    this.baseX=x;this.oscAmp=oscAmp;this.oscSpeed=oscSpeed;this.oscPhase=0;
+  }
+  collide(ball) {
+    const d=dist(ball.x,ball.y,this.x,this.y);
+    if (d < ball.r+this.r+1) {
+      const nx=(ball.x-this.x)/d, ny=(ball.y-this.y)/d;
+      ball.x=this.x+nx*(ball.r+this.r+2); ball.y=this.y+ny*(ball.r+this.r+2);
+      const spd=Math.hypot(ball.vx,ball.vy);
+      ball.vx=nx*Math.max(spd,7)*1.15; ball.vy=ny*Math.max(spd,7)*1.15;
+      this.hit=14; GS.addScore(100); Sound.bumper();
+    }
+  }
+  tick() {
+    if(this.hit>0)this.hit--;
+    if(this.oscAmp>0){this.oscPhase+=this.oscSpeed;this.x=this.baseX+Math.sin(this.oscPhase)*this.oscAmp;}
+  }
+  draw(ctx) {
+    const glow=this.hit>0;
+    ctx.save();
+    ctx.shadowBlur=glow?35:14; ctx.shadowColor=glow?'#fff':'#ff2d78';
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,PI2);
+    ctx.fillStyle=glow?'#ffaac8':'#ff2d78'; ctx.fill();
+    ctx.strokeStyle='#ff88aa'; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r*.42,0,PI2);
+    ctx.fillStyle=glow?'#ffffff':'#ff6699'; ctx.fill();
+    ctx.shadowBlur=0; ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// TARGET
+// ═══════════════════════════════════════════════
+class Target {
+  constructor(x,y,w,h) { this.x=x;this.y=y;this.w=w;this.h=h; this.hit=0; this.dead=0; this.on=true; }
+  collide(ball) {
+    if (!this.on) return;
+    if (ball.x+ball.r>this.x && ball.x-ball.r<this.x+this.w &&
+        ball.y+ball.r>this.y && ball.y-ball.r<this.y+this.h) {
+      const ol=ball.x+ball.r-this.x, or2=this.x+this.w-(ball.x-ball.r);
+      const ot=ball.y+ball.r-this.y, ob=this.y+this.h-(ball.y-ball.r);
+      const m=Math.min(ol,or2,ot,ob);
+      if(m===ol){ball.x-=ol;ball.vx=-Math.abs(ball.vx)*0.65;}
+      else if(m===or2){ball.x+=or2;ball.vx=Math.abs(ball.vx)*0.65;}
+      else if(m===ot){ball.y-=ot;ball.vy=-Math.abs(ball.vy)*0.65;}
+      else{ball.y+=ob;ball.vy=Math.abs(ball.vy)*0.65;}
+      this.hit=20; this.on=false; this.dead=360;
+      GS.addScore(250); Sound.target();
+    }
+  }
+  tick() {
+    if(this.hit>0)this.hit--;
+    if(!this.on&&--this.dead<=0)this.on=true;
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.shadowBlur=this.on?(this.hit>0?28:8):0;
+    ctx.shadowColor='#ffee00';
+    ctx.fillStyle=this.on?(this.hit>0?'#ffffa0':'#ffee00'):'#332800';
+    ctx.fillRect(this.x,this.y,this.w,this.h);
+    if(this.on){ctx.strokeStyle='#fff8';ctx.lineWidth=1;ctx.strokeRect(this.x+2,this.y+2,this.w-4,this.h-4);}
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// RAMP (static line segment)
+// ═══════════════════════════════════════════════
+class Ramp {
+  constructor(x1,y1,x2,y2) {
+    this.x1=x1;this.y1=y1;this.x2=x2;this.y2=y2; this.hit=0;
+    const dx=x2-x1,dy=y2-y1,l=Math.hypot(dx,dy);
+    this.nx=-dy/l; this.ny=dx/l;
+  }
+  collide(ball) {
+    const cp=closestPtSeg(ball.x,ball.y,this.x1,this.y1,this.x2,this.y2);
+    const d=dist(ball.x,ball.y,cp.x,cp.y);
+    if (d<ball.r+1) {
+      // normal = direction from closest point on line TO ball center (always correct side)
+      const nx = d>0.001 ? (ball.x-cp.x)/d : this.nx;
+      const ny = d>0.001 ? (ball.y-cp.y)/d : this.ny;
+      ball.x=cp.x+nx*(ball.r+2); ball.y=cp.y+ny*(ball.r+2);
+      const rv=reflectVel(ball.vx,ball.vy,nx,ny);
+      ball.vx=rv.x*0.7; ball.vy=rv.y*0.7;
+      if(this.hit===0){Sound.ramp();GS.addScore(50);}
+      this.hit=12;
+    }
+  }
+  tick() { if(this.hit>0)this.hit--; }
+  draw(ctx,thick=5) {
+    ctx.save();
+    ctx.lineCap='round'; ctx.lineWidth=thick;
+    ctx.strokeStyle=this.hit>0?'#ff88dd':'#ff00aa';
+    ctx.shadowBlur=10; ctx.shadowColor='#ff00aa';
+    ctx.beginPath(); ctx.moveTo(this.x1,this.y1); ctx.lineTo(this.x2,this.y2);
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// BONUS ZONE
+// ═══════════════════════════════════════════════
+class BonusZone {
+  constructor(x,y,r) { this.x=x;this.y=y;this.r=r; this.cd=0; this.pulse=0; }
+  collide(ball) {
+    if(this.cd>0)return;
+    if(dist(ball.x,ball.y,this.x,this.y)<ball.r+this.r) {
+      GS.setMult(GS.multiplier<4?GS.multiplier+1:2);
+      this.cd=360;
+    }
+  }
+  tick() { if(this.cd>0)this.cd--; this.pulse=(this.pulse+0.055)%(Math.PI*2); }
+  draw(ctx) {
+    const av=this.cd>0?0.25:(0.55+0.2*Math.sin(this.pulse));
+    ctx.save();
+    ctx.shadowBlur=18; ctx.shadowColor='#ff8c00';
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,PI2);
+    ctx.strokeStyle=`rgba(255,140,0,${av})`; ctx.lineWidth=3; ctx.stroke();
+    ctx.fillStyle=`rgba(255,140,0,${av*.28})`; ctx.fill();
+    ctx.fillStyle=`rgba(255,200,80,${av})`;
+    ctx.font=`bold ${this.r*.48}px Orbitron,monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowBlur=0;
+    ctx.fillText('BONUS',this.x,this.y-this.r*.15);
+    ctx.font=`${this.r*.38}px Orbitron,monospace`;
+    ctx.fillText('ZONE',this.x,this.y+this.r*.35);
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// PLUNGER
+// ═══════════════════════════════════════════════
+class Plunger {
+  constructor() {
+    this.charge=0; this.charging=false;
+    this.y=0; this.restY=0; this.vy=0;
+  }
+  init(restY) { this.restY=restY; this.y=restY; this.vy=0; this.charge=0; this.charging=false; }
+
+  startCharge() { this.charging=true; }
+
+  release(ball) {
+    if(!this.charging) return;
+    this.charging=false;
+    if(this.charge < 0.12) { this.charge=0; return; }
+    ball.active=true;
+    ball.inLane=true;
+    ball.vy = -this.charge * PLUNGER_POWER;
+    ball.vx = 0;
+    ball.trail=[];
+    // plunger snaps upward for visual spring-back
+    this.vy = -this.charge * 14;
+    this.charge=0;
+    Sound.launch();
+  }
+
+  catchBall(ball) {
+    ball.active=false;
+    ball.vx=0; ball.vy=0; ball.trail=[];
+    this.vy = 3;
+    Sound.plungerCatch();
+  }
+
+  tick(ball) {
+    if(this.charging) {
+      this.charge=Math.min(1,this.charge+0.022);
+      // pull platform down while charging
+      const tgt=this.restY + this.charge*65;
+      this.y += (tgt-this.y)*0.28;
+      this.vy=0;
+    } else {
+      // spring: attract back to restY with damping
+      const spring=(this.restY-this.y)*0.22;
+      this.vy=(this.vy+spring)*0.72;
+      this.y+=this.vy;
+      if(Math.abs(this.y-this.restY)<0.4&&Math.abs(this.vy)<0.1){
+        this.y=this.restY; this.vy=0;
+      }
+    }
+    // sync inactive ball onto platform
+    if(!ball.active) {
+      ball.x=plungerX;
+      ball.y=this.y-ball.r;
+      ball.trail=[];
+    }
+  }
+
+  draw(ctx,cx) {
+    if(!GS.running||GS.over) return;
+    ctx.save();
+    const pw=30, ph=9;
+    // spring coils between platform and bottom
+    const coilBot=this.restY+55;
+    for(let sy=this.y+ph/2+2; sy<coilBot; sy+=7) {
+      ctx.beginPath();
+      ctx.moveTo(cx-10,sy); ctx.lineTo(cx+10,sy+3.5);
+      ctx.strokeStyle='rgba(160,120,20,0.7)';
+      ctx.lineWidth=2; ctx.lineCap='round'; ctx.stroke();
+    }
+    // platform body
+    ctx.shadowBlur=14; ctx.shadowColor='#ffcc00';
+    const gr=ctx.createLinearGradient(cx,this.y-ph/2,cx,this.y+ph/2);
+    gr.addColorStop(0,'#ffe566'); gr.addColorStop(1,'#886600');
+    ctx.fillStyle=gr;
+    ctx.fillRect(cx-pw/2, this.y-ph/2, pw, ph);
+    ctx.strokeStyle='#ffee99'; ctx.lineWidth=1.2;
+    ctx.strokeRect(cx-pw/2, this.y-ph/2, pw, ph);
+    ctx.shadowBlur=0;
+    // charge bar (always visible, shows 0 when idle)
+    const bw=26, barY=coilBot+6;
+    ctx.fillStyle='#22180888'; ctx.fillRect(cx-bw/2,barY,bw,5);
+    if(this.charge>0) {
+      ctx.fillStyle=`rgba(255,${120+Math.round(this.charge*135)},0,0.9)`;
+      ctx.fillRect(cx-bw/2,barY,bw*this.charge,5);
+    }
+    ctx.strokeStyle='#ff8c0055'; ctx.lineWidth=1;
+    ctx.strokeRect(cx-bw/2,barY,bw,5);
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// KICKBACK
+// ═══════════════════════════════════════════════
+class Kickback {
+  constructor(isLeft) { this.isLeft=isLeft; this.charged=true; this.flash=0; }
+
+  recharge() {
+    if(!this.charged){ this.charged=true; this.flash=40; Sound.kickbackCharge(); }
+  }
+
+  tryKick(ball) {
+    if(!this.charged||ball.y<H*0.65||ball.y>H*0.92) return false;
+    this.charged=false; this.flash=60;
+    const spd=Math.max(Math.hypot(ball.vx,ball.vy),8);
+    ball.vx=this.isLeft ? spd*1.4+5 : -(spd*1.4+5);
+    ball.vy=-Math.abs(ball.vy)*0.6-5;
+    GS.addScore(500); Sound.kickback();
+    return true;
+  }
+
+  tick() { if(this.flash>0)this.flash--; }
+
+  draw(ctx) {
+    const bw=5, bh=H*0.07;
+    const bx=this.isLeft?4:W-4-bw, by=H*0.75-bh/2;
+    ctx.save();
+    ctx.globalAlpha=this.flash>0?0.5+0.5*Math.sin(this.flash*0.3):1;
+    ctx.fillStyle=this.charged?'#00ffcc':'#0a2a22';
+    ctx.shadowBlur=this.charged?16:0; ctx.shadowColor='#00ffcc';
+    ctx.fillRect(bx,by,bw,bh);
+    if(this.charged){
+      ctx.fillStyle='#fff'; ctx.shadowBlur=0; ctx.globalAlpha=1;
+      ctx.font=`bold ${Math.round(H*0.022)}px monospace`;
+      ctx.textBaseline='middle';
+      ctx.textAlign=this.isLeft?'left':'right';
+      ctx.fillText(this.isLeft?'»':'«', this.isLeft?11:W-11, H*0.75);
+    }
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// MEGA RAMP
+// ═══════════════════════════════════════════════
+// Silent wall segment — deflects ball, no score or sound
+class WallSeg {
+  constructor(x1,y1,x2,y2){ this.x1=x1;this.y1=y1;this.x2=x2;this.y2=y2;this.hit=0; }
+  collide(ball){
+    const cp=closestPtSeg(ball.x,ball.y,this.x1,this.y1,this.x2,this.y2);
+    const d=dist(ball.x,ball.y,cp.x,cp.y);
+    if(d<ball.r+1){
+      const nx=d>0.001?(ball.x-cp.x)/d:0, ny=d>0.001?(ball.y-cp.y)/d:1;
+      ball.x=cp.x+nx*(ball.r+2); ball.y=cp.y+ny*(ball.r+2);
+      const rv=reflectVel(ball.vx,ball.vy,nx,ny);
+      ball.vx=rv.x*0.75; ball.vy=rv.y*0.75; this.hit=8;
+    }
+  }
+  tick(){ if(this.hit>0)this.hit--; }
+}
+
+class MegaRamp {
+  constructor() {
+    this.state='idle'; // 'idle'|'hit'
+    this.hitTimer=0; this.megaFlash=0; this.holePhase=0;
+    this.walls=[]; this.holeX=0; this.holeY=0; this.holeR=0;
+    this.holeCooldown=0; // frames hole is inactive after ejecting ball
+  }
+
+  init() {
+    // Continuous cone: mouth is 3× ball diameter wide, tapers to hole at top-left
+    this.walls=[
+      new WallSeg(W*0.22, H*0.47, W*0.09, H*0.09), // right wall — full cone, no kink
+    ];
+    this.holeX=W*0.045; this.holeY=H*0.092; this.holeR=ball.r*2;
+    this.state='idle'; this.megaFlash=0; this.holeCooldown=0;
+  }
+
+  get inUse() { return this.state!=='idle'; }
+
+  collide(ball) {
+    if(ball.inLane) return;
+    this.walls.forEach(w=>w.collide(ball));
+    if(this.state!=='idle' || this.holeCooldown>0) return;
+    if(dist(ball.x,ball.y,this.holeX,this.holeY)<this.holeR){
+      this.state='hit'; this.hitTimer=35; this.megaFlash=90;
+      ball.x=this.holeX; ball.y=this.holeY; ball.vx=0; ball.vy=0;
+      GS.addScore(2500); Sound.megaHit();
+    }
+  }
+
+  update(ball) {
+    if(this.state==='hit'){
+      ball.x=this.holeX; ball.y=this.holeY; ball.vx=0; ball.vy=0;
+      if(--this.hitTimer<=0){
+        this.state='idle';
+        this.holeCooldown=90; // ~1.5 s — prevents immediate re-trigger as ball clears hole
+        ball.vx=1; ball.vy=9; // spring kick: push ball down the cone
+      }
+    }
+  }
+
+  tick() {
+    this.holePhase=(this.holePhase+0.04)%(Math.PI*2);
+    if(this.megaFlash>0) this.megaFlash--;
+    if(this.holeCooldown>0) this.holeCooldown--;
+    this.walls.forEach(w=>w.tick());
+  }
+
+  draw(ctx) {
+    if(!this.walls.length) return;
+    const br=ball.r, pulse=0.65+0.35*Math.sin(this.holePhase*1.4);
+    const wall=this.walls[0];
+    ctx.save();
+
+    // Cone fill — subtle amber showing the funnel area
+    ctx.beginPath();
+    ctx.moveTo(0, wall.y1);
+    ctx.lineTo(wall.x1, wall.y1);
+    ctx.lineTo(wall.x2, wall.y2);
+    ctx.lineTo(0, wall.y2);
+    ctx.closePath();
+    ctx.fillStyle=`rgba(255,170,0,${pulse*0.07})`; ctx.fill();
+
+    // Right wall: continuous cone, triple-stroked
+    ctx.beginPath();
+    ctx.moveTo(wall.x1, wall.y1);
+    ctx.lineTo(wall.x2, wall.y2);
+    ctx.lineCap='round'; ctx.lineJoin='round';
+
+    ctx.lineWidth=br*0.9+5; ctx.strokeStyle='rgba(255,170,0,0.18)';
+    ctx.shadowBlur=12; ctx.shadowColor='#ffaa00'; ctx.stroke();
+
+    ctx.lineWidth=br*0.9+1; ctx.strokeStyle='#060410'; ctx.shadowBlur=0; ctx.stroke();
+
+    ctx.lineWidth=1.8; ctx.strokeStyle='#ffaa00';
+    ctx.shadowBlur=7; ctx.shadowColor='#ffaa00'; ctx.stroke();
+
+    // Cone mouth — pulsing horizontal line showing the entry opening
+    ctx.globalAlpha=pulse*0.7;
+    ctx.strokeStyle='#ffaa00'; ctx.lineWidth=2; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.moveTo(0, wall.y1); ctx.lineTo(wall.x1, wall.y1); ctx.stroke();
+
+    // Hole at top-left corner
+    ctx.globalAlpha=1;
+    const g=0.55+0.45*Math.sin(this.holePhase);
+    ctx.beginPath(); ctx.arc(this.holeX, this.holeY, this.holeR, 0, PI2);
+    ctx.fillStyle=`rgba(255,170,0,${g*0.45})`; ctx.shadowBlur=g*22; ctx.shadowColor='#ffaa00';
+    ctx.fill();
+    ctx.strokeStyle=`rgba(255,170,0,${g})`; ctx.lineWidth=2.5; ctx.stroke();
+
+    ctx.restore();
+
+    // MEGA HIT text
+    if(this.megaFlash>0){
+      const a=Math.min(1,this.megaFlash/20)*(0.7+0.3*Math.sin(this.megaFlash*0.35));
+      ctx.save(); ctx.globalAlpha=a;
+      ctx.font=`bold ${Math.round(H*0.07)}px Orbitron,monospace`;
+      ctx.fillStyle='#ffaa00'; ctx.shadowBlur=30; ctx.shadowColor='#ffaa00';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('MEGA HIT!',W/2,H*0.5);
+      ctx.restore();
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// GLOBALS & LAYOUT
+// ═══════════════════════════════════════════════
+const PI2=Math.PI*2;
+const GRAVITY=0.26, FRICTION=0.992, MAX_SPEED=28, PLUNGER_POWER=32;
+const LANE_W_RATIO=0.144; // launcher lane width as fraction of canvas
+
+let W,H,PW,laneW, ball, flippers, bumpers, targets, ramps, bonusZones, plunger, kickbacks;
+const megaRamp = new MegaRamp();
+let plungerX, plungerBallY; // plunger lane x-center, ball y-rest
+let launcherSlide=0, launcherTargetSlide=0; // launcher slide-out animation
+let ballReturnTimer=0; // countdown frames before ball rolls into launcher after loss
+
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+
+function buildTable() {
+  const br = W*0.0372;
+  const bumpr= W*0.054;
+  PW = W;
+  laneW = W*LANE_W_RATIO;
+  plungerX = W - laneW/2;
+  plungerBallY = H*0.88;
+
+  ball = new Ball(br);
+  ball.reset(plungerX, plungerBallY);
+
+  plunger = new Plunger();
+  plunger.init(plungerBallY);
+
+  const flipLen = PW*0.184;
+  const flipY   = H*0.878;
+  const lPivX   = PW*0.28;
+  const rPivX   = PW*0.72;
+  flippers = [
+    new Flipper(lPivX, flipY, flipLen, true),
+    new Flipper(rPivX, flipY, flipLen, false),
+  ];
+
+  bumpers = [
+    new Bumper(PW*0.50, H*0.30, bumpr, PW*0.12, 0.018), // oscillates left/right
+    new Bumper(PW*0.385,H*0.41, bumpr),
+    new Bumper(PW*0.615,H*0.41, bumpr),
+  ];
+
+  kickbacks = [new Kickback(true), new Kickback(false)];
+  megaRamp.init();
+
+  const tw=PW*0.11, th=H*0.022;
+  targets = [
+    new Target(PW*0.255,H*0.57, tw, th),
+    new Target(PW*0.43, H*0.57, tw, th),
+    new Target(PW*0.605,H*0.57, tw, th),
+    new Target(PW*0.78, H*0.57, tw, th),
+  ];
+
+  ramps = [
+    // upper right guide arc — start/end past right wall to close gap
+    new Ramp(PW+4, H*0.22, PW*0.82, H*0.31),
+    new Ramp(PW*0.82, H*0.31, PW+4, H*0.46),
+    // lower funnel guides — start past wall to close gap
+    new Ramp(-4, H*0.76, lPivX, flipY),
+    new Ramp(PW+4, H*0.76, rPivX, flipY),
+  ];
+
+  bonusZones = [
+    new BonusZone(PW*0.5, H*0.205, W*0.065),
+  ];
+}
+
+// ═══════════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════════
+const Keys = { left:false, right:false };
+
+function initInput() {
+  document.addEventListener('keydown', e => {
+    if(e.code==='ShiftLeft')  { e.preventDefault(); Keys.left=true; }
+    if(e.code==='ShiftRight') { e.preventDefault(); Keys.right=true; }
+    if(e.code==='KeyT')       { e.preventDefault(); if(GS.running&&!GS.paused) GS.doTilt(); }
+    if(e.code==='ArrowDown')  { e.preventDefault(); if(GS.running&&!GS.paused&&!ball.active) plunger.startCharge(); }
+    if(e.code==='Space')      { e.preventDefault(); if(GS.running) togglePause(); }
+    if(e.code==='KeyP'||e.code==='Escape') { if(GS.running) togglePause(); }
+    if(e.code==='Enter') { if(!ovEl.classList.contains('hidden')) { e.preventDefault(); Sound.resume(); GS.paused?togglePause():startGame(); } }
+    if(e.code==='Digit0' && GS.running && !GS.paused) {
+      // Debug: shoot ball into mega ramp hole
+      ballReturnTimer=0;
+      megaRamp.holeCooldown=0;
+      ball.active=true; ball.inLane=false;
+      ball.x=W*0.09; ball.y=H*0.43;
+      ball.vx=-0.8; ball.vy=-20;
+      ball.trail=[];
+      launcherTargetSlide=laneW;
+    }
+  });
+  document.addEventListener('keyup', e => {
+    if(e.code==='ShiftLeft')  Keys.left=false;
+    if(e.code==='ShiftRight') Keys.right=false;
+    if(e.key==='Shift')       { Keys.left=false; Keys.right=false; } // fallback: any Shift release
+    if(e.code==='ArrowDown')  { if(GS.running&&!GS.paused&&!ball.active) plunger.release(ball); }
+  });
+
+  // Reset keys when window loses focus (prevents stuck flippers)
+  window.addEventListener('blur', () => { Keys.left=false; Keys.right=false; });
+  document.addEventListener('visibilitychange', () => { if(document.hidden){ Keys.left=false; Keys.right=false; } });
+
+  // Touch
+  const touchFlipL=new Set(), touchFlipR=new Set();
+  let touchStartY={}, lastTwoTap=0, twoTapN=0;
+
+  canvas.addEventListener('touchstart', e=>{
+    e.preventDefault(); Sound.resume();
+    if(e.touches.length>=3) {
+      const now=Date.now();
+      if(now-lastTwoTap<450){twoTapN++;if(twoTapN>=2){if(GS.running&&!GS.paused)GS.doTilt();twoTapN=0;}}
+      else twoTapN=1;
+      lastTwoTap=now;
+    }
+    for(const t of e.changedTouches) {
+      touchStartY[t.identifier]=t.clientY;
+      const r=canvas.getBoundingClientRect();
+      const x=(t.clientX-r.left)*(W/r.width);
+      const y=(t.clientY-r.top)*(H/r.height);
+      if(y>H*0.78) {
+        if(x<W*0.5){touchFlipL.add(t.identifier); Keys.left=true;}
+        else if(GS.running&&!GS.paused&&!ball.active){plunger.startCharge();} // launcher visible: bottom-right = plunger
+        else{touchFlipR.add(t.identifier); Keys.right=true;}
+      } else {
+        // Plunger swipe zone (non-flipper area)
+        if(GS.running&&!GS.paused&&!ball.active) plunger.startCharge();
+      }
+    }
+  },{passive:false});
+
+  canvas.addEventListener('touchend', e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches) {
+      if(touchFlipL.has(t.identifier)){touchFlipL.delete(t.identifier); if(touchFlipL.size===0)Keys.left=false;}
+      if(touchFlipR.has(t.identifier)){touchFlipR.delete(t.identifier); if(touchFlipR.size===0)Keys.right=false;}
+      const dy=t.clientY-(touchStartY[t.identifier]||t.clientY);
+      if(dy>20&&GS.running&&!GS.paused&&!ball.active) plunger.release(ball);
+      else if(!touchFlipL.has(t.identifier)&&!touchFlipR.has(t.identifier)&&GS.running&&!GS.paused&&!ball.active) plunger.release(ball);
+      delete touchStartY[t.identifier];
+    }
+  },{passive:false});
+
+  canvas.addEventListener('touchcancel', e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches) {
+      touchFlipL.delete(t.identifier); touchFlipR.delete(t.identifier);
+      delete touchStartY[t.identifier];
+    }
+    if(touchFlipL.size===0)Keys.left=false;
+    if(touchFlipR.size===0)Keys.right=false;
+  },{passive:false});
+}
+
+// ═══════════════════════════════════════════════
+// UPDATE
+// ═══════════════════════════════════════════════
+function update() {
+  if(GS.paused||!GS.running||GS.over) return;
+  GS.tick();
+  plunger.tick(ball);
+
+  // launcher slide animation
+  launcherSlide += (launcherTargetSlide - launcherSlide) * 0.18;
+  if(Math.abs(launcherTargetSlide - launcherSlide) < 0.5) launcherSlide = launcherTargetSlide;
+
+  // Ball return sequence: hide ball, then drop it into lane from above
+  if(ballReturnTimer > 0) {
+    ballReturnTimer--;
+    ball.x = -999; ball.y = -999; // override plunger sync — stay hidden
+    if(ballReturnTimer === 0) {
+      plunger.init(plungerBallY);
+      ball.active = true; ball.inLane = true;
+      ball.x = plungerX; ball.y = H * 0.14;
+      ball.vx = 0; ball.vy = 5; ball.trail = [];
+    }
+  }
+
+  flippers[0].pressed = Keys.left  && !GS.tiltLocked;
+  flippers[1].pressed = Keys.right && !GS.tiltLocked;
+  flippers.forEach(f=>f.update());
+
+  bumpers.forEach(b=>b.tick());
+  targets.forEach(t=>t.tick());
+  ramps.forEach(r=>r.tick());
+  bonusZones.forEach(z=>z.tick());
+  kickbacks.forEach(k=>k.tick());
+  megaRamp.tick();
+
+  if(ball.active) {
+    if(megaRamp.inUse) {
+      megaRamp.update(ball);
+    } else {
+      ball.update(); // forces + speed cap + trail (no movement)
+
+      // substeps: split movement so ball never skips more than 75% of its radius per step
+      const steps=Math.max(1, Math.ceil(Math.hypot(ball.vx,ball.vy)/(ball.r*0.75)));
+      const dx=ball.vx/steps, dy=ball.vy/steps;
+
+      for(let s=0; s<steps && ball.active; s++) {
+        ball.x+=dx; ball.y+=dy;
+
+        const laneL=W-laneW+3, laneR=W-3;
+        if(ball.inLane) {
+          if(ball.x-ball.r<laneL){ball.x=laneL+ball.r; ball.vx=Math.abs(ball.vx)*0.5;}
+          if(ball.x+ball.r>laneR){ball.x=laneR-ball.r; ball.vx=-Math.abs(ball.vx)*0.5;}
+          if(ball.vy>=0 && ball.y+ball.r>=plunger.y-4){ plunger.catchBall(ball); break; }
+          if(ball.y<H*0.13){
+            ball.inLane=false;
+            launcherTargetSlide=laneW;
+            ball.vx=-Math.abs(ball.vy)*0.5-2;
+            ball.vy*=0.5;
+          }
+        } else {
+          megaRamp.collide(ball);
+          if(megaRamp.inUse) break;
+          if(ball.x-ball.r<0)  {ball.x=ball.r;   if(!kickbacks[0].tryKick(ball)) ball.vx= Math.abs(ball.vx)*0.65;}
+          if(ball.x+ball.r>W)  {ball.x=W-ball.r; if(!kickbacks[1].tryKick(ball)) ball.vx=-Math.abs(ball.vx)*0.65;}
+          if(ball.y-ball.r<H*0.078){ball.y=H*0.078+ball.r; ball.vy=Math.abs(ball.vy)*0.65;}
+          flippers.forEach(f=>f.collide(ball));
+          bumpers.forEach(b=>b.collide(ball));
+          const prevOn=targets.map(t=>t.on);
+          targets.forEach(t=>t.collide(ball));
+          if(targets.some((t,i)=>prevOn[i]&&!t.on)) kickbacks.forEach(k=>k.recharge());
+          ramps.forEach(r=>r.collide(ball));
+          bonusZones.forEach(z=>z.collide(ball));
+        }
+      }
+
+      // Ball lost only if it exits the playfield (not the lane)
+      if(ball.active && !ball.inLane && ball.y>H+ball.r*4) {
+        GS.balls--; Sound.ballDrop();
+        if(GS.balls<=0){ GS.saveHi(); onGameOver(); }
+        else{
+          ball.active=false; ball.vx=0; ball.vy=0; ball.trail=[];
+          launcherTargetSlide=0;
+          ballReturnTimer=90; // 1.5 s — launcher slides in, then ball rolls down
+          setTimeout(() => Sound.ballReturn(), 700);
+        }
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// DRAW
+// ═══════════════════════════════════════════════
+function drawBg() {
+  // Full fill
+  ctx.fillStyle='#060612'; ctx.fillRect(0,0,W,H);
+  // Playfield gradient (full width)
+  const g=ctx.createLinearGradient(0,H*.07,0,H);
+  g.addColorStop(0,'#0c0c22'); g.addColorStop(1,'#070714');
+  ctx.fillStyle=g; ctx.fillRect(0,H*.075,W,H-H*.075);
+
+  // Grid dots
+  ctx.fillStyle='rgba(155,48,255,0.055)';
+  for(let gx=18;gx<W;gx+=28) for(let gy=H*.075+18;gy<H;gy+=28) ctx.fillRect(gx,gy,2,2);
+
+  // Playfield border (full width)
+  ctx.save();
+  ctx.strokeStyle='#9b30ff'; ctx.lineWidth=8;
+  ctx.shadowBlur=14; ctx.shadowColor='#9b30ff';
+  ctx.strokeRect(1,H*.075,W-2,H-H*.075-1);
+  ctx.restore();
+}
+
+function drawHUD() {
+  const hh=H*.075;
+  ctx.fillStyle='#08081c'; ctx.fillRect(0,0,W,hh);
+  ctx.strokeStyle='#9b30ff44'; ctx.lineWidth=1; ctx.strokeRect(0,0,W,hh);
+  const mid=hh*.5, fs=Math.max(10,H*.024);
+  ctx.save(); ctx.textBaseline='middle';
+
+  // Score
+  ctx.font=`bold ${fs}px Orbitron,monospace`;
+  ctx.fillStyle='#39ff14'; ctx.shadowBlur=9; ctx.shadowColor='#39ff14';
+  ctx.textAlign='left';
+  ctx.fillText(String(GS.score).padStart(7,'0'), W*.025, mid);
+
+  // Balls as circles
+  for(let i=0;i<GS.balls;i++) {
+    const bx=W*.48+(i-1)*W*.055, by=mid;
+    ctx.beginPath(); ctx.arc(bx,by,hh*.22,0,PI2);
+    ctx.fillStyle='#c8d8ff'; ctx.shadowBlur=5; ctx.shadowColor='#88aaff'; ctx.fill();
+    ctx.strokeStyle='#00e5ff'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+
+  // Multiplier
+  if(GS.multiplier>1) {
+    ctx.textAlign='center';
+    const pulse=0.8+0.2*Math.sin(Date.now()*.006);
+    ctx.fillStyle=`rgba(255,140,0,${pulse})`; ctx.shadowColor='#ff8c00'; ctx.shadowBlur=12;
+    ctx.font=`bold ${fs*1.1}px Orbitron,monospace`;
+    ctx.fillText(`×${GS.multiplier}`, W*.68, mid);
+    // timer bar
+    const bw=W*.1, frac=GS.multTimer/600;
+    ctx.fillStyle='#ff8c0066'; ctx.fillRect(W*.625, hh*.7, bw, hh*.18);
+    ctx.fillStyle='#ff8c00'; ctx.shadowBlur=0; ctx.fillRect(W*.625, hh*.7, bw*frac, hh*.18);
+  }
+
+  // High score
+  ctx.font=`${fs*.72}px Orbitron,monospace`; ctx.fillStyle='#9b30ff66';
+  ctx.shadowBlur=0; ctx.textAlign='right';
+  ctx.fillText(`HI:${String(GS.hi).padStart(7,'0')}`, W*.98, mid);
+  ctx.restore();
+
+  // TILT flash
+  if(GS.tiltFlash>0) {
+    ctx.save();
+    ctx.globalAlpha=GS.tiltFlash/70;
+    ctx.font=`bold ${H*.055}px Orbitron,monospace`;
+    ctx.fillStyle='#ff2d78'; ctx.shadowBlur=25; ctx.shadowColor='#ff2d78';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(GS.tiltLocked?'TILT LOCKED!':'TILT!', W/2, H*.5);
+    ctx.restore();
+  }
+
+  // Floating score pop
+  if(GS.scoreFlash>0&&GS.scoreFlashVal>0) {
+    ctx.save();
+    ctx.globalAlpha=GS.scoreFlash/40;
+    ctx.font=`bold ${H*.03}px Orbitron,monospace`;
+    ctx.fillStyle='#ffffff'; ctx.shadowBlur=10; ctx.shadowColor='#fff';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    const py=H*.42-(1-GS.scoreFlash/40)*H*.05;
+    ctx.fillText(`+${GS.scoreFlashVal*GS.multiplier}`,W/2,py);
+    ctx.restore();
+  }
+}
+
+function drawTouchHints() {
+  if(!('ontouchstart' in window)) return;
+  const zh=H*.18, zy=H-zh-4, zw=PW*.36;
+  ctx.save(); ctx.globalAlpha=.14;
+  const roundRect=(x,y,w,h,r)=>{
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+  };
+  ctx.fillStyle=Keys.left?'#00e5ff':'#00e5ff44';
+  roundRect(4,zy,zw,zh,6); ctx.fill();
+  ctx.fillStyle=Keys.right?'#00e5ff':'#00e5ff44';
+  roundRect(PW-zw-4,zy,zw,zh,6); ctx.fill();
+  ctx.globalAlpha=.5; ctx.strokeStyle='#00e5ff'; ctx.lineWidth=1.5;
+  roundRect(4,zy,zw,zh,6); ctx.stroke();
+  roundRect(PW-zw-4,zy,zw,zh,6); ctx.stroke();
+  ctx.globalAlpha=.7; ctx.fillStyle='#00e5ff';
+  ctx.font=`${H*.02}px Orbitron,monospace`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.shadowBlur=0;
+  ctx.fillText('◄ LEFT',4+zw/2,zy+zh/2);
+  ctx.fillText('RIGHT ►',PW-zw/2-4,zy+zh/2);
+  ctx.restore();
+}
+
+function drawLauncher() {
+  if(!GS.running || GS.over) return;
+  if(launcherSlide >= laneW) return; // fully off-screen
+  const lx = W - laneW;
+  ctx.save();
+  ctx.translate(launcherSlide, 0);
+
+  // Panel background
+  ctx.fillStyle='#08081a';
+  ctx.fillRect(lx, H*0.075, laneW, H-H*0.075);
+
+  // Left divider wall
+  ctx.strokeStyle='#9b30ff'; ctx.lineWidth=8;
+  ctx.shadowBlur=14; ctx.shadowColor='#9b30ff';
+  ctx.beginPath(); ctx.moveTo(lx, H*0.075); ctx.lineTo(lx, H); ctx.stroke();
+
+  // Inner side walls
+  ctx.strokeStyle='#9b30ff55'; ctx.lineWidth=1.5; ctx.shadowBlur=4;
+  ctx.beginPath(); ctx.moveTo(lx+3, H*0.075); ctx.lineTo(lx+3, H); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W-3,  H*0.075); ctx.lineTo(W-3,  H); ctx.stroke();
+
+  // Arc guide at top of channel
+  ctx.strokeStyle='#9b30ff88'; ctx.lineWidth=2; ctx.shadowBlur=8;
+  ctx.beginPath();
+  ctx.arc(lx, H*0.13, laneW/2, 0, -Math.PI/2, true);
+  ctx.stroke();
+
+  // Ball: hidden during return sequence; visible once rolling in or sitting on plunger
+  if((!ball.active || ball.inLane) && ballReturnTimer === 0) ball.draw(ctx);
+
+  // Plunger
+  plunger.draw(ctx, plungerX);
+
+  ctx.restore();
+}
+
+function draw() {
+  drawBg();
+  ramps.forEach(r=>r.draw(ctx));
+  megaRamp.draw(ctx);
+  kickbacks.forEach(k=>k.draw(ctx));
+  bonusZones.forEach(z=>z.draw(ctx));
+  targets.forEach(t=>t.draw(ctx));
+  bumpers.forEach(b=>b.draw(ctx));
+  flippers.forEach(f=>f.draw(ctx));
+  drawLauncher(); // overlay: panel + plunger + ball when inLane
+  drawTouchHints();
+  if(ball.active && !ball.inLane) ball.draw(ctx); // ball in playfield only
+  drawHUD();
+}
+
+// ═══════════════════════════════════════════════
+// GAME FLOW
+// ═══════════════════════════════════════════════
+const ovEl       = document.getElementById('overlay');
+const ovTitle    = document.getElementById('ovTitle');
+const ovScore    = document.getElementById('ovScore');
+const ovHigh     = document.getElementById('ovHigh');
+const ovPlayBtn  = document.getElementById('ovPlayBtn');
+const ovMenuBtn  = document.getElementById('ovMenuBtn');
+const ovControls = document.getElementById('ovControls');
+const ovBuild    = document.getElementById('ovBuild');
+const pauseBtn   = document.getElementById('pauseBtn');
+
+ovBuild.textContent = 'BUILD ' + BUILD;
+
+let raf;
+function loop() {
+  update(); draw();
+  raf=requestAnimationFrame(loop);
+}
+
+function startGame() {
+  GS.reset(); GS.running=true;
+  launcherSlide=0; launcherTargetSlide=0; ballReturnTimer=0;
+  buildTable();
+  ovEl.classList.add('hidden');
+  pauseBtn.style.display='flex';
+  ovMenuBtn.style.display='none';
+  ovControls.style.display='';
+  if(raf) cancelAnimationFrame(raf);
+  loop();
+}
+
+function onGameOver() {
+  GS.over=true; GS.running=false;
+  Sound.gameOver();
+  ovTitle.textContent='GAME OVER';
+  ovScore.textContent=`SCORE  ${GS.score.toLocaleString()}`;
+  ovHigh.textContent=`BEST   ${GS.hi.toLocaleString()}`;
+  ovPlayBtn.textContent='PLAY AGAIN';
+  ovMenuBtn.style.display='none';
+  ovControls.style.display='none';
+  ovEl.classList.remove('hidden');
+  pauseBtn.style.display='none';
+}
+
+function togglePause() {
+  if(GS.over) return;
+  GS.paused=!GS.paused;
+  pauseBtn.textContent=GS.paused?'▶':'⏸';
+  if(GS.paused) {
+    ovTitle.textContent='PAUSED';
+    ovScore.textContent=`SCORE  ${GS.score.toLocaleString()}`;
+    ovHigh.textContent=`BEST   ${GS.hi.toLocaleString()}`;
+    ovPlayBtn.textContent='RESUME';
+    ovMenuBtn.textContent='RESTART';
+    ovMenuBtn.style.display='';
+    ovControls.style.display='none';
+    ovEl.classList.remove('hidden');
+  } else {
+    ovEl.classList.add('hidden');
+  }
+}
+
+ovPlayBtn.addEventListener('click',()=>{ Sound.resume(); GS.paused?togglePause():startGame(); });
+ovMenuBtn.addEventListener('click',()=>{ Sound.resume(); startGame(); });
+pauseBtn.addEventListener('click',()=>{ Sound.resume(); togglePause(); });
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+Sound.init();
+initInput();
+
+function resize() {
+  const maxH=window.innerHeight;
+  const maxW=Math.min(window.innerWidth, maxH*0.57);
+  W=Math.floor(maxW); H=Math.floor(maxH);
+  canvas.width=W; canvas.height=H;
+  const c=document.getElementById('gameContainer');
+  c.style.width=W+'px'; c.style.height=H+'px';
+  if(GS.running) buildTable();
+}
+window.addEventListener('resize',resize);
+resize();
+
+// Show start screen
+ovTitle.textContent='NEON PINBALL';
+ovScore.textContent='';
+ovHigh.textContent=GS.hi>0?`BEST  ${GS.hi.toLocaleString()}`:'';
+ovPlayBtn.textContent='PLAY';
+ovMenuBtn.style.display='none';
+
+// Draw static bg while on start screen
+ctx.fillStyle='#060612'; ctx.fillRect(0,0,W,H);
+</script>
+</body>
+</html>
