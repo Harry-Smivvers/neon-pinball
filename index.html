@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Neon Pinball</title>
+<link rel="icon" type="image/png" href="icon_lo.png">
+<link rel="apple-touch-icon" href="icon_lo.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Neon Pinball">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -187,6 +192,12 @@ const Sound = (() => {
     ramp:     () => tone(550, 'sine', 0.13, 0.18, 1100),
     launch:        () => tone(280, 'sawtooth', 0.32, 0.22, 70),
     plungerCatch:  () => { noise(0.05, 0.28); tone(95, 'triangle', 0.38, 0.22, 55); tone(410, 'sine', 0.5, 0.10, 370); },
+    slingshot:      () => { tone(180,'square',0.07,0.25,90); noise(0.035,0.18); },
+    skillShot:      () => { [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>tone(f,'sine',0.18,0.22),i*55)); setTimeout(()=>noise(0.12,0.14),280); },
+    spinnerTick:    () => tone(900,'sine',0.04,0.06),
+    multiballStart: () => { [262,330,392,523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,'sawtooth',0.12,0.18),i*60)); setTimeout(()=>{ tone(1047,'sine',0.2,0.5,784); noise(0.15,0.12); },380); },
+    magnetOn:       () => { [110,138,165].forEach((f,i)=>setTimeout(()=>tone(f,'sine',0.6,0.15,f*1.5),i*80)); },
+    magnetOff:      () => tone(220,'sine',0.4,0.2,60),
     ballDrop: () => {
       // Heavy metallic impact — ball clanks into metal box, two smaller bounces
       noise(0.065, 0.40); tone(85, 'triangle', 0.55, 0.30, 48); tone(360, 'sine', 0.9, 0.13, 300);
@@ -233,7 +244,7 @@ function reflectVel(vx,vy, nx,ny) {
 // GAME STATE
 // ═══════════════════════════════════════════════
 const GS = {
-  score:0, balls:3, multiplier:1, multTimer:0,
+  score:0, balls:3, multiplier:1, multTimer:0, frames:0,
   tiltCount:0, tiltLocked:false, tiltLockTimer:0,
   paused:false, running:false, over:false,
   hi: +( localStorage.getItem('npin_hi')||0 ),
@@ -259,6 +270,7 @@ const GS = {
   },
 
   tick() {
+    this.frames++;
     if (this.multTimer > 0 && --this.multTimer === 0) this.multiplier=1;
     if (this.tiltFlash > 0) this.tiltFlash--;
     if (this.scoreFlash > 0) this.scoreFlash--;
@@ -268,7 +280,7 @@ const GS = {
   reset() {
     Object.assign(this, {score:0,balls:3,multiplier:1,multTimer:0,
       tiltCount:0,tiltLocked:false,tiltLockTimer:0,
-      paused:false,running:false,over:false,tiltFlash:0,scoreFlash:0,scoreFlashVal:0});
+      paused:false,running:false,over:false,tiltFlash:0,scoreFlash:0,scoreFlashVal:0,frames:0});
   },
 
   saveHi() {
@@ -481,6 +493,7 @@ class BonusZone {
   collide(ball) {
     if(this.cd>0)return;
     if(dist(ball.x,ball.y,this.x,this.y)<ball.r+this.r) {
+      if(GS.multiplier>=2 && magnet && !magnet.active) magnet.activate();
       GS.setMult(GS.multiplier<4?GS.multiplier+1:2);
       this.cd=360;
     }
@@ -520,6 +533,7 @@ class Plunger {
     if(!this.charging) return;
     this.charging=false;
     if(this.charge < 0.12) { this.charge=0; return; }
+    skillChargeAtRelease=this.charge; skillShotPending=true;
     ball.active=true;
     ball.inLane=true;
     ball.vy = -this.charge * PLUNGER_POWER;
@@ -535,6 +549,7 @@ class Plunger {
     ball.active=false;
     ball.vx=0; ball.vy=0; ball.trail=[];
     this.vy = 3;
+    skillZone=randomizeSkillZone(); skillShotPending=false;
     Sound.plungerCatch();
   }
 
@@ -592,6 +607,13 @@ class Plunger {
     }
     ctx.strokeStyle='#ff8c0055'; ctx.lineWidth=1;
     ctx.strokeRect(cx-bw/2,barY,bw,5);
+    // Skill shot target band
+    if(skillShotPending && skillZone){
+      ctx.fillStyle='rgba(0,255,200,0.45)';
+      ctx.fillRect(cx-bw/2+bw*skillZone.lo, barY, bw*(skillZone.hi-skillZone.lo), 5);
+      ctx.strokeStyle='#00ffccaa'; ctx.lineWidth=1;
+      ctx.strokeRect(cx-bw/2+bw*skillZone.lo, barY, bw*(skillZone.hi-skillZone.lo), 5);
+    }
     ctx.restore();
   }
 }
@@ -633,6 +655,122 @@ class Kickback {
       ctx.textAlign=this.isLeft?'left':'right';
       ctx.fillText(this.isLeft?'»':'«', this.isLeft?11:W-11, H*0.75);
     }
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// SLINGSHOT
+// ═══════════════════════════════════════════════
+class Slingshot {
+  constructor(x1,y1,x2,y2,x3,y3){
+    this.pts=[[x1,y1],[x2,y2],[x3,y3]];
+    this.kx1=x1;this.ky1=y1;this.kx2=x2;this.ky2=y2;
+    this.hit=0;
+  }
+  collide(b){
+    const cp=closestPtSeg(b.x,b.y,this.kx1,this.ky1,this.kx2,this.ky2);
+    const d=dist(b.x,b.y,cp.x,cp.y);
+    if(d<b.r+2){
+      const nx=d>0.001?(b.x-cp.x)/d:0, ny=d>0.001?(b.y-cp.y)/d:1;
+      b.x=cp.x+nx*(b.r+3); b.y=cp.y+ny*(b.r+3);
+      const spd=Math.max(Math.hypot(b.vx,b.vy),10);
+      b.vx=nx*spd*1.4; b.vy=ny*spd*1.4;
+      this.hit=20; GS.addScore(150); Sound.slingshot();
+    }
+  }
+  tick(){ if(this.hit>0)this.hit--; }
+  draw(ctx){
+    const glow=this.hit>0;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(this.pts[0][0],this.pts[0][1]);
+    this.pts.forEach(p=>ctx.lineTo(p[0],p[1]));
+    ctx.closePath();
+    ctx.shadowBlur=glow?32:10; ctx.shadowColor='#00ffcc';
+    ctx.fillStyle=glow?'rgba(0,255,200,0.30)':'rgba(0,255,200,0.08)';
+    ctx.fill();
+    ctx.strokeStyle=glow?'#00ffcc':'#00aa88'; ctx.lineWidth=2; ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// SPINNER
+// ═══════════════════════════════════════════════
+class Spinner {
+  constructor(x,y,len){
+    this.x=x;this.y=y;this.len=len;
+    this.angle=0;this.angV=0;this.hit=0;this._prev=0;
+  }
+  get x1(){ return this.x-Math.cos(this.angle)*this.len*0.5; }
+  get y1(){ return this.y-Math.sin(this.angle)*this.len*0.5; }
+  get x2(){ return this.x+Math.cos(this.angle)*this.len*0.5; }
+  get y2(){ return this.y+Math.sin(this.angle)*this.len*0.5; }
+  collide(b){
+    const cp=closestPtSeg(b.x,b.y,this.x1,this.y1,this.x2,this.y2);
+    const d=dist(b.x,b.y,cp.x,cp.y);
+    if(d<b.r+2){
+      const nx=d>0.001?(b.x-cp.x)/d:0, ny=d>0.001?(b.y-cp.y)/d:1;
+      b.x=cp.x+nx*(b.r+3); b.y=cp.y+ny*(b.r+3);
+      const tx=-Math.sin(this.angle), ty=Math.cos(this.angle);
+      this.angV+=(b.vx*tx+b.vy*ty)*0.05;
+      const rv=reflectVel(b.vx,b.vy,nx,ny);
+      b.vx=rv.x*0.65; b.vy=rv.y*0.65;
+      this.hit=8;
+    }
+  }
+  tick(){
+    if(this.hit>0)this.hit--;
+    this._prev=this.angle;
+    this.angle=(this.angle+this.angV)%(Math.PI*2);
+    if(this.angle<0)this.angle+=Math.PI*2;
+    const crossed=(this._prev>Math.PI*1.9&&this.angle<Math.PI*0.1)||(this._prev<Math.PI*0.1&&this.angle>Math.PI*1.9);
+    if(crossed&&Math.abs(this.angV)>0.08){ GS.addScore(75); Sound.spinnerTick(); }
+    this.angV*=0.97;
+  }
+  draw(ctx){
+    const bright=Math.min(1,Math.abs(this.angV)/0.25);
+    ctx.save();
+    ctx.shadowBlur=bright*22+6; ctx.shadowColor='#cc44ff';
+    ctx.strokeStyle=`rgba(${Math.round(180+bright*75)},${Math.round(50+bright*50)},255,${0.5+bright*0.5})`;
+    ctx.lineWidth=3+bright*4; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(this.x1,this.y1); ctx.lineTo(this.x2,this.y2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(this.x,this.y,5,0,PI2);
+    ctx.fillStyle='#cc44ff'; ctx.shadowBlur=8; ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════
+// MAGNET
+// ═══════════════════════════════════════════════
+class Magnet {
+  constructor(x,y,r,strength){
+    this.x=x;this.y=y;this.r=r;this.strength=strength;
+    this.active=false;this.timer=0;this.phase=0;
+  }
+  activate(){ this.active=true; this.timer=480; Sound.magnetOn(); }
+  attract(b){
+    if(!this.active)return;
+    const dx=this.x-b.x, dy=this.y-b.y, d=Math.hypot(dx,dy);
+    if(d<this.r&&d>b.r*2){ const pull=this.strength*(1-d/this.r); b.vx+=dx/d*pull; b.vy+=dy/d*pull; }
+  }
+  tick(){
+    this.phase=(this.phase+0.07)%(Math.PI*2);
+    if(this.active&&--this.timer<=0){ this.active=false; Sound.magnetOff(); }
+  }
+  draw(ctx){
+    const p=0.5+0.5*Math.sin(this.phase);
+    ctx.save();
+    ctx.setLineDash([6,6]);
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,PI2);
+    ctx.strokeStyle=this.active?`rgba(255,80,255,${0.35+p*0.4})`:'rgba(180,80,255,0.18)';
+    ctx.shadowBlur=this.active?p*20:0; ctx.shadowColor='#ff44ff';
+    ctx.lineWidth=2; ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.active?10+p*4:6,0,PI2);
+    ctx.fillStyle=this.active?`rgba(255,80,255,${0.5+p*0.5})`:'rgba(180,80,255,0.3)';
+    ctx.shadowBlur=this.active?p*25:0; ctx.fill();
     ctx.restore();
   }
 }
@@ -770,12 +908,27 @@ const LANE_W_RATIO=0.144; // launcher lane width as fraction of canvas
 
 let W,H,PW,laneW, ball, flippers, bumpers, targets, ramps, bonusZones, plunger, kickbacks;
 const megaRamp = new MegaRamp();
-let plungerX, plungerBallY; // plunger lane x-center, ball y-rest
+let plungerX, plungerBallY;
+let slingshots, spinner, magnet, ball2;
+let multiballActive=false, multiballFlash=0, targetHitFrames=[];
+let skillZone={lo:0.4,hi:0.58}, skillShotPending=false, skillChargeAtRelease=0, skillShotFlash=0;
 let launcherSlide=0, launcherTargetSlide=0; // launcher slide-out animation
 let ballReturnTimer=0; // countdown frames before ball rolls into launcher after loss
 
 const canvas=document.getElementById('gameCanvas');
 const ctx=canvas.getContext('2d');
+
+function randomizeSkillZone(){ const lo=0.28+Math.random()*0.46; return {lo, hi:Math.min(1,lo+0.18)}; }
+
+function triggerMultiball(){
+  multiballActive=true; multiballFlash=120;
+  ball2.active=true; ball2.inLane=false;
+  ball2.x=W*0.5; ball2.y=H*0.35;
+  ball2.vx=(Math.random()-0.5)*10; ball2.vy=-10;
+  ball2.trail=[];
+  targetHitFrames.fill(-1);
+  Sound.multiballStart();
+}
 
 function buildTable() {
   const br = W*0.0372;
@@ -807,6 +960,15 @@ function buildTable() {
   ];
 
   kickbacks = [new Kickback(true), new Kickback(false)];
+  slingshots = [
+    new Slingshot(W*0.06,H*0.63, W*0.20,H*0.72, W*0.06,H*0.72),
+    new Slingshot(W*0.94,H*0.63, W*0.80,H*0.72, W*0.94,H*0.72),
+  ];
+  spinner = new Spinner(PW*0.55, H*0.49, W*0.15);
+  magnet  = new Magnet(PW*0.32, H*0.505, W*0.11, 2.0);
+  ball2   = new Ball(br);
+  skillZone = randomizeSkillZone();
+  skillShotPending=false; multiballActive=false;
   megaRamp.init();
 
   const tw=PW*0.11, th=H*0.022;
@@ -816,6 +978,7 @@ function buildTable() {
     new Target(PW*0.605,H*0.57, tw, th),
     new Target(PW*0.78, H*0.57, tw, th),
   ];
+  targetHitFrames = targets.map(()=>-1);
 
   ramps = [
     // upper right guide arc — start/end past right wall to close gap
@@ -939,6 +1102,7 @@ function update() {
       ball.active = true; ball.inLane = true;
       ball.x = plungerX; ball.y = H * 0.14;
       ball.vx = 0; ball.vy = 5; ball.trail = [];
+      skillZone=randomizeSkillZone(); skillShotPending=false;
     }
   }
 
@@ -952,6 +1116,11 @@ function update() {
   bonusZones.forEach(z=>z.tick());
   kickbacks.forEach(k=>k.tick());
   megaRamp.tick();
+  slingshots.forEach(s=>s.tick());
+  if(spinner) spinner.tick();
+  if(magnet)  magnet.tick();
+  if(skillShotFlash>0) skillShotFlash--;
+  if(multiballFlash>0) multiballFlash--;
 
   if(ball.active) {
     if(megaRamp.inUse) {
@@ -976,6 +1145,12 @@ function update() {
             launcherTargetSlide=laneW;
             ball.vx=-Math.abs(ball.vy)*0.5-2;
             ball.vy*=0.5;
+            if(skillShotPending){
+              skillShotPending=false;
+              if(skillChargeAtRelease>=skillZone.lo&&skillChargeAtRelease<=skillZone.hi){
+                GS.addScore(3000); skillShotFlash=90; Sound.skillShot();
+              }
+            }
           }
         } else {
           megaRamp.collide(ball);
@@ -987,24 +1162,65 @@ function update() {
           bumpers.forEach(b=>b.collide(ball));
           const prevOn=targets.map(t=>t.on);
           targets.forEach(t=>t.collide(ball));
-          if(targets.some((t,i)=>prevOn[i]&&!t.on)) kickbacks.forEach(k=>k.recharge());
+          targets.forEach((t,i)=>{
+            if(prevOn[i]&&!t.on){
+              kickbacks.forEach(k=>k.recharge());
+              targetHitFrames[i]=GS.frames;
+              if(!multiballActive&&targetHitFrames.every(f=>f>=0&&GS.frames-f<600)) triggerMultiball();
+            }
+          });
           ramps.forEach(r=>r.collide(ball));
+          slingshots.forEach(s=>s.collide(ball));
+          if(spinner) spinner.collide(ball);
+          if(magnet)  magnet.attract(ball);
           bonusZones.forEach(z=>z.collide(ball));
         }
       }
 
       // Ball lost only if it exits the playfield (not the lane)
       if(ball.active && !ball.inLane && ball.y>H+ball.r*4) {
-        GS.balls--; Sound.ballDrop();
-        if(GS.balls<=0){ GS.saveHi(); onGameOver(); }
-        else{
-          ball.active=false; ball.vx=0; ball.vy=0; ball.trail=[];
-          launcherTargetSlide=0;
-          ballReturnTimer=90; // 1.5 s — launcher slides in, then ball rolls down
-          setTimeout(() => Sound.ballReturn(), 700);
+        if(multiballActive && ball2 && ball2.active) {
+          // Multiball still running — swap ball2 into primary slot, no life lost
+          ball.x=ball2.x; ball.y=ball2.y; ball.vx=ball2.vx; ball.vy=ball2.vy;
+          ball.trail=[...ball2.trail]; ball.active=true; ball.inLane=false;
+          ball2.active=false; multiballActive=false;
+        } else {
+          GS.balls--; Sound.ballDrop();
+          if(GS.balls<=0){ GS.saveHi(); onGameOver(); }
+          else{
+            ball.active=false; ball.vx=0; ball.vy=0; ball.trail=[];
+            launcherTargetSlide=0;
+            ballReturnTimer=90;
+            setTimeout(() => Sound.ballReturn(), 700);
+          }
         }
       }
     }
+  }
+
+  // Ball 2 physics (multiball)
+  if(multiballActive && ball2 && ball2.active) {
+    ball2.update();
+    const sp2=Math.hypot(ball2.vx,ball2.vy);
+    const steps2=Math.max(1,Math.ceil(sp2/(ball2.r*0.75)));
+    const dx2=ball2.vx/steps2, dy2=ball2.vy/steps2;
+    for(let s=0;s<steps2&&ball2.active;s++){
+      ball2.x+=dx2; ball2.y+=dy2;
+      if(ball2.x-ball2.r<0){ball2.x=ball2.r; ball2.vx=Math.abs(ball2.vx)*0.65;}
+      if(ball2.x+ball2.r>W){ball2.x=W-ball2.r; ball2.vx=-Math.abs(ball2.vx)*0.65;}
+      if(ball2.y-ball2.r<H*0.078){ball2.y=H*0.078+ball2.r; ball2.vy=Math.abs(ball2.vy)*0.65;}
+      flippers.forEach(f=>f.collide(ball2));
+      bumpers.forEach(b=>b.collide(ball2));
+      const prevOn2=targets.map(t=>t.on);
+      targets.forEach(t=>t.collide(ball2));
+      targets.forEach((t,i)=>{if(prevOn2[i]&&!t.on)kickbacks.forEach(k=>k.recharge());});
+      ramps.forEach(r=>r.collide(ball2));
+      slingshots.forEach(s=>s.collide(ball2));
+      if(spinner) spinner.collide(ball2);
+      if(magnet)  magnet.attract(ball2);
+      bonusZones.forEach(z=>z.collide(ball2));
+    }
+    if(ball2.active && ball2.y>H+ball2.r*4){ ball2.active=false; multiballActive=false; }
   }
 }
 
@@ -1070,6 +1286,30 @@ function drawHUD() {
   ctx.shadowBlur=0; ctx.textAlign='right';
   ctx.fillText(`HI:${String(GS.hi).padStart(7,'0')}`, W*.98, mid);
   ctx.restore();
+
+  // Skill shot flash
+  if(skillShotFlash>0){
+    const a=skillShotFlash/90*(0.7+0.3*Math.sin(skillShotFlash*0.3));
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.font=`bold ${H*.052}px Orbitron,monospace`;
+    ctx.fillStyle='#00ffcc'; ctx.shadowBlur=28; ctx.shadowColor='#00ffcc';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('SKILL SHOT!',W/2,H*.44);
+    ctx.font=`${H*.026}px Orbitron,monospace`;
+    ctx.fillText('+3000',W/2,H*.44+H*.054);
+    ctx.restore();
+  }
+
+  // Multiball announcement flash
+  if(multiballFlash>0){
+    const a=Math.min(1,multiballFlash/30)*(0.7+0.3*Math.sin(multiballFlash*0.25));
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.font=`bold ${H*.065}px Orbitron,monospace`;
+    ctx.fillStyle='#ff8800'; ctx.shadowBlur=35; ctx.shadowColor='#ff8800';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('MULTIBALL!',W/2,H*.38);
+    ctx.restore();
+  }
 
   // TILT flash
   if(GS.tiltFlash>0) {
@@ -1157,18 +1397,36 @@ function drawLauncher() {
   ctx.restore();
 }
 
+function drawBall2() {
+  const b=ball2; if(!b||!b.active)return;
+  for(let i=0;i<b.trail.length;i++){
+    const a=(i/b.trail.length)*0.22, tr=b.r*(i/b.trail.length)*0.8;
+    ctx.beginPath(); ctx.arc(b.trail[i].x,b.trail[i].y,tr,0,PI2);
+    ctx.fillStyle=`rgba(255,180,80,${a})`; ctx.fill();
+  }
+  const g=ctx.createRadialGradient(b.x-b.r*.35,b.y-b.r*.35,b.r*.08,b.x,b.y,b.r);
+  g.addColorStop(0,'#ffffff'); g.addColorStop(.45,'#ffddaa'); g.addColorStop(1,'#bb6600');
+  ctx.save(); ctx.shadowBlur=14; ctx.shadowColor='#ff8800';
+  ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,PI2); ctx.fillStyle=g; ctx.fill();
+  ctx.restore();
+}
+
 function draw() {
   drawBg();
   ramps.forEach(r=>r.draw(ctx));
   megaRamp.draw(ctx);
   kickbacks.forEach(k=>k.draw(ctx));
+  if(magnet)  magnet.draw(ctx);
+  if(spinner) spinner.draw(ctx);
+  slingshots.forEach(s=>s.draw(ctx));
   bonusZones.forEach(z=>z.draw(ctx));
   targets.forEach(t=>t.draw(ctx));
   bumpers.forEach(b=>b.draw(ctx));
   flippers.forEach(f=>f.draw(ctx));
-  drawLauncher(); // overlay: panel + plunger + ball when inLane
+  drawLauncher();
   drawTouchHints();
-  if(ball.active && !ball.inLane) ball.draw(ctx); // ball in playfield only
+  if(ball.active && !ball.inLane) ball.draw(ctx);
+  if(multiballActive && ball2 && ball2.active) drawBall2();
   drawHUD();
 }
 
@@ -1196,6 +1454,8 @@ function loop() {
 function startGame() {
   GS.reset(); GS.running=true;
   launcherSlide=0; launcherTargetSlide=0; ballReturnTimer=0;
+  multiballActive=false; multiballFlash=0;
+  skillShotPending=false; skillShotFlash=0;
   buildTable();
   ovEl.classList.add('hidden');
   pauseBtn.style.display='flex';
