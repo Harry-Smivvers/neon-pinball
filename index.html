@@ -250,23 +250,17 @@ function reflectVel(vx,vy, nx,ny) {
 // GAME STATE
 // ═══════════════════════════════════════════════
 const GS = {
-  score:0, balls:3, multiplier:1, multTimer:0, frames:0,
+  score:0, balls:3, frames:0,
   tiltCount:0, tiltLocked:false, tiltLockTimer:0,
   paused:false, running:false, over:false,
   hi: +( localStorage.getItem('npin_hi')||0 ),
   tiltFlash:0, scoreFlash:0, scoreFlashVal:0,
 
   addScore(pts) {
-    const v = pts * this.multiplier;
     const prev = this.score;
-    this.score += v;
-    this.scoreFlash = 40; this.scoreFlashVal = v;
+    this.score += pts;
+    this.scoreFlash = 40; this.scoreFlashVal = pts;
     if (Math.floor(this.score/5000) > Math.floor(prev/5000)) Sound.milestone();
-  },
-
-  setMult(m) {
-    this.multiplier = m; this.multTimer = 600;
-    Sound.bonus();
   },
 
   doTilt() {
@@ -277,14 +271,13 @@ const GS = {
 
   tick() {
     this.frames++;
-    if (this.multTimer > 0 && --this.multTimer === 0) this.multiplier=1;
     if (this.tiltFlash > 0) this.tiltFlash--;
     if (this.scoreFlash > 0) this.scoreFlash--;
     if (this.tiltLocked && --this.tiltLockTimer <= 0) { this.tiltLocked=false; this.tiltCount=0; }
   },
 
   reset() {
-    Object.assign(this, {score:0,balls:3,multiplier:1,multTimer:0,
+    Object.assign(this, {score:0,balls:3,
       tiltCount:0,tiltLocked:false,tiltLockTimer:0,
       paused:false,running:false,over:false,tiltFlash:0,scoreFlash:0,scoreFlashVal:0,frames:0});
   },
@@ -309,21 +302,10 @@ class Ball {
     this.vy += GRAVITY;
     const sp = Math.hypot(this.vx, this.vy);
     if (sp > MAX_SPEED) { this.vx=this.vx/sp*MAX_SPEED; this.vy=this.vy/sp*MAX_SPEED; }
-    this.trail.push({x:this.x,y:this.y});
-    if (this.trail.length>9) this.trail.shift();
     // movement done externally in substeps
   }
   draw(ctx) {
     if (!this.active && this.x===0) return;
-    // trail
-    for (let i=0;i<this.trail.length;i++) {
-      const a=(i/this.trail.length)*0.25;
-      const tr=this.r*(i/this.trail.length)*0.8;
-      ctx.beginPath();
-      ctx.arc(this.trail[i].x,this.trail[i].y,tr,0,PI2);
-      ctx.fillStyle=`rgba(180,210,255,${a})`;
-      ctx.fill();
-    }
     const g=ctx.createRadialGradient(this.x-this.r*.35,this.y-this.r*.35,this.r*.08,this.x,this.y,this.r);
     g.addColorStop(0,'#ffffff'); g.addColorStop(.45,'#ccdeff'); g.addColorStop(1,'#4466bb');
     ctx.save();
@@ -426,7 +408,7 @@ class Bumper {
 // TARGET
 // ═══════════════════════════════════════════════
 class Target {
-  constructor(x,y,w,h) { this.x=x;this.y=y;this.w=w;this.h=h; this.hit=0; this.dead=0; this.on=true; }
+  constructor(x,y,w,h) { this.x=x;this.y=y;this.w=w;this.h=h; this.hit=0; this.on=false; }
   collide(ball) {
     if (!this.on) return;
     if (ball.x+ball.r>this.x && ball.x-ball.r<this.x+this.w &&
@@ -438,14 +420,12 @@ class Target {
       else if(m===or2){ball.x+=or2;ball.vx=Math.abs(ball.vx)*0.65;}
       else if(m===ot){ball.y-=ot;ball.vy=-Math.abs(ball.vy)*0.65;}
       else{ball.y+=ob;ball.vy=Math.abs(ball.vy)*0.65;}
-      this.hit=20; this.on=false; this.dead=360;
-      GS.addScore(250); Sound.target();
+      this.hit=20; this.on=false;
+      spawnFirework(this.x+this.w/2, this.y+this.h/2, '#ffee00', 14, 0.45);
+      GS.addScore(2000); Sound.target();
     }
   }
-  tick() {
-    if(this.hit>0)this.hit--;
-    if(!this.on&&--this.dead<=0)this.on=true;
-  }
+  tick() { if(this.hit>0)this.hit--; }
   draw(ctx) {
     ctx.save();
     ctx.shadowBlur=this.on?(this.hit>0?28:8):0;
@@ -492,37 +472,6 @@ class Ramp {
 }
 
 // ═══════════════════════════════════════════════
-// BONUS ZONE
-// ═══════════════════════════════════════════════
-class BonusZone {
-  constructor(x,y,r) { this.x=x;this.y=y;this.r=r; this.cd=0; this.pulse=0; }
-  collide(ball) {
-    if(this.cd>0)return;
-    if(dist(ball.x,ball.y,this.x,this.y)<ball.r+this.r) {
-      if(GS.multiplier>=2 && magnet && !magnet.active) magnet.activate();
-      GS.setMult(GS.multiplier<4?GS.multiplier+1:2);
-      this.cd=360;
-    }
-  }
-  tick() { if(this.cd>0)this.cd--; this.pulse=(this.pulse+0.055)%(Math.PI*2); }
-  draw(ctx) {
-    const av=this.cd>0?0.25:(0.55+0.2*Math.sin(this.pulse));
-    ctx.save();
-    ctx.shadowBlur=18; ctx.shadowColor='#ff8c00';
-    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,PI2);
-    ctx.strokeStyle=`rgba(255,140,0,${av})`; ctx.lineWidth=3; ctx.stroke();
-    ctx.fillStyle=`rgba(255,140,0,${av*.28})`; ctx.fill();
-    ctx.fillStyle=`rgba(255,200,80,${av})`;
-    ctx.font=`bold ${this.r*.48}px Orbitron,monospace`;
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.shadowBlur=0;
-    ctx.fillText('BONUS',this.x,this.y-this.r*.15);
-    ctx.font=`${this.r*.38}px Orbitron,monospace`;
-    ctx.fillText('ZONE',this.x,this.y+this.r*.35);
-    ctx.restore();
-  }
-}
-
 // ═══════════════════════════════════════════════
 // PLUNGER
 // ═══════════════════════════════════════════════
@@ -625,30 +574,31 @@ class Plunger {
 }
 
 // ═══════════════════════════════════════════════
-// KICKBACK
+// KICKBACK (top wall)
 // ═══════════════════════════════════════════════
 class Kickback {
-  constructor(isLeft) { this.isLeft=isLeft; this.charged=true; this.flash=0; }
-
-  recharge() {
-    if(!this.charged){ this.charged=true; this.flash=40; Sound.kickbackCharge(); }
-  }
+  constructor(cx, hw) { this.cx=cx; this.hw=hw; this.charged=true; this.flash=0; this.rechargeTimer=0; }
 
   tryKick(ball) {
-    if(!this.charged||ball.y<H*0.65||ball.y>H*0.92) return false;
-    this.charged=false; this.flash=60;
+    if(!this.charged || Math.abs(ball.x-this.cx)>this.hw) return false;
+    this.charged=false; this.flash=60; this.rechargeTimer=180;
     const spd=Math.max(Math.hypot(ball.vx,ball.vy),8);
-    ball.vx=this.isLeft ? spd*1.4+5 : -(spd*1.4+5);
-    ball.vy=-Math.abs(ball.vy)*0.6-5;
+    ball.vy=spd*1.2+5;
+    ball.vx+=(ball.x-this.cx)/this.hw*4;
+    targetActiveTimer=1200;
+    targets.forEach(t=>{t.on=true;t.hit=0;});
     GS.addScore(500); Sound.kickback();
     return true;
   }
 
-  tick() { if(this.flash>0)this.flash--; }
+  tick() {
+    if(this.flash>0) this.flash--;
+    if(this.rechargeTimer>0 && --this.rechargeTimer===0){ this.charged=true; Sound.kickbackCharge(); }
+  }
 
   draw(ctx) {
-    const bw=5, bh=H*0.07;
-    const bx=this.isLeft?4:W-4-bw, by=H*0.75-bh/2;
+    const bw=this.hw*2, bh=5;
+    const bx=this.cx-bw/2, by=H*0.078;
     ctx.save();
     ctx.globalAlpha=this.flash>0?0.5+0.5*Math.sin(this.flash*0.3):1;
     ctx.fillStyle=this.charged?'#00ffcc':'#0a2a22';
@@ -657,9 +607,8 @@ class Kickback {
     if(this.charged){
       ctx.fillStyle='#fff'; ctx.shadowBlur=0; ctx.globalAlpha=1;
       ctx.font=`bold ${Math.round(H*0.022)}px monospace`;
-      ctx.textBaseline='middle';
-      ctx.textAlign=this.isLeft?'left':'right';
-      ctx.fillText(this.isLeft?'»':'«', this.isLeft?11:W-11, H*0.75);
+      ctx.textBaseline='top'; ctx.textAlign='center';
+      ctx.fillText('↓', this.cx, H*0.078+6);
     }
     ctx.restore();
   }
@@ -828,6 +777,7 @@ class MegaRamp {
       ball.x=this.holeX; ball.y=this.holeY; ball.vx=0; ball.vy=0;
       megaCountUp={active:true,remaining:50000,perFrame:2000};
       Sound.megaHit();
+      if(!multiballActive) triggerMultiball();
       // Initial fireworks burst around the hole
       FW_COLS.forEach((c,i)=>setTimeout(()=>spawnFirework(
         W*(0.05+Math.random()*0.6), H*(0.08+Math.random()*0.5), c), i*60));
@@ -915,13 +865,14 @@ class MegaRamp {
 const PI2=Math.PI*2;
 const GRAVITY=0.26, FRICTION=0.992, MAX_SPEED=28, PLUNGER_POWER=32;
 const LANE_W_RATIO=0.144;
-const MULTIBALL_ENABLED=false; // set true to enable multiball feature
 
-let W,H,PW,laneW, ball, flippers, bumpers, targets, ramps, bonusZones, plunger, kickbacks;
+
+let W,H,PW,laneW, ball, flippers, bumpers, targets, ramps, plunger, kickbacks;
 const megaRamp = new MegaRamp();
 let plungerX, plungerBallY;
 let slingshots, spinner, magnet, ball2;
 let multiballActive=false, multiballFlash=0, targetHitFrames=[];
+let targetActiveTimer=0;
 let skillZone={lo:0.4,hi:0.58}, skillShotPending=false, skillChargeAtRelease=0, skillShotFlash=0;
 let launcherSlide=0, launcherTargetSlide=0;
 let ballReturnTimer=0;
@@ -931,15 +882,16 @@ let fireworks=[];
 const canvas=document.getElementById('gameCanvas');
 const ctx=canvas.getContext('2d');
 
+
 function randomizeSkillZone(){ const lo=0.28+Math.random()*0.46; return {lo, hi:Math.min(1,lo+0.18)}; }
 
 const FW_COLS=['#ff44ff','#ffaa00','#00ffcc','#ff2d78','#44aaff','#ffffff','#ffff44'];
-function spawnFirework(x,y,col){
+function spawnFirework(x,y,col,count=40,speedScale=1){
   col=col||FW_COLS[~~(Math.random()*FW_COLS.length)];
-  for(let i=0;i<40;i++){
-    const a=(i/40)*PI2, spd=3+Math.random()*10;
-    fireworks.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-3,
-      life:55+~~(Math.random()*55),maxLife:110,color:col,r:2+Math.random()*3});
+  for(let i=0;i<count;i++){
+    const a=(i/count)*PI2, spd=(3+Math.random()*10)*speedScale;
+    fireworks.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-3*speedScale,
+      life:55+~~(Math.random()*55),maxLife:110,color:col,r:(2+Math.random()*3)*speedScale});
   }
 }
 
@@ -977,17 +929,17 @@ function buildTable() {
   ];
 
   bumpers = [
-    new Bumper(PW*0.50, H*0.30, bumpr, PW*0.12, 0.018), // oscillates left/right
+    new Bumper(PW*0.50, H*0.30, bumpr),
     new Bumper(PW*0.385,H*0.41, bumpr),
     new Bumper(PW*0.615,H*0.41, bumpr),
   ];
 
-  kickbacks = [new Kickback(true), new Kickback(false)];
+  kickbacks = [new Kickback(W*0.28, W*0.10), new Kickback(W*0.63, W*0.10)];
   slingshots = [
     new Slingshot(W*0.06,H*0.63, W*0.20,H*0.72, W*0.06,H*0.72),
     new Slingshot(W*0.94,H*0.63, W*0.80,H*0.72, W*0.94,H*0.72),
   ];
-  spinner = new Spinner(PW*0.55, H*0.49, W*0.15);
+  spinner = new Spinner(PW*0.78, H*0.22, W*0.15);
   magnet  = new Magnet(PW*0.32, H*0.505, W*0.11, 2.0);
   ball2   = new Ball(br);
   skillZone = randomizeSkillZone();
@@ -1012,9 +964,7 @@ function buildTable() {
     new Ramp(PW+4, H*0.76, rPivX, flipY),
   ];
 
-  bonusZones = [
-    new BonusZone(PW*0.5, H*0.205, W*0.065),
-  ];
+
 }
 
 // ═══════════════════════════════════════════════
@@ -1027,7 +977,7 @@ function initInput() {
     if(e.code==='ShiftLeft')  { e.preventDefault(); Keys.left=true; }
     if(e.code==='ShiftRight') { e.preventDefault(); Keys.right=true; }
     if(e.code==='KeyT')       { e.preventDefault(); if(GS.running&&!GS.paused) GS.doTilt(); }
-    if(e.code==='ArrowDown')  { e.preventDefault(); if(GS.running&&!GS.paused&&!ball.active) plunger.startCharge(); }
+    if(e.code==='ArrowDown')  { e.preventDefault(); if(GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0) plunger.startCharge(); }
     if(e.code==='Space')      { e.preventDefault(); if(GS.running) togglePause(); }
     if(e.code==='KeyP'||e.code==='Escape') { if(GS.running) togglePause(); }
     if(e.code==='Enter') { if(!ovEl.classList.contains('hidden')) { e.preventDefault(); Sound.resume(); GS.paused?togglePause():startGame(); } }
@@ -1046,7 +996,7 @@ function initInput() {
     if(e.code==='ShiftLeft')  Keys.left=false;
     if(e.code==='ShiftRight') Keys.right=false;
     if(e.key==='Shift')       { Keys.left=false; Keys.right=false; } // fallback: any Shift release
-    if(e.code==='ArrowDown')  { if(GS.running&&!GS.paused&&!ball.active) plunger.release(ball); }
+    if(e.code==='ArrowDown')  { if(GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0) plunger.release(ball); }
   });
 
   // Reset keys when window loses focus (prevents stuck flippers)
@@ -1072,11 +1022,11 @@ function initInput() {
       const y=(t.clientY-r.top)*(H/r.height);
       if(y>H*0.78) {
         if(x<W*0.5){touchFlipL.add(t.identifier); Keys.left=true;}
-        else if(GS.running&&!GS.paused&&!ball.active){plunger.startCharge();} // launcher visible: bottom-right = plunger
+        else if(GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0){plunger.startCharge();} // launcher visible: bottom-right = plunger
         else{touchFlipR.add(t.identifier); Keys.right=true;}
       } else {
         // Plunger swipe zone (non-flipper area)
-        if(GS.running&&!GS.paused&&!ball.active) plunger.startCharge();
+        if(GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0) plunger.startCharge();
       }
     }
   },{passive:false});
@@ -1087,8 +1037,8 @@ function initInput() {
       if(touchFlipL.has(t.identifier)){touchFlipL.delete(t.identifier); if(touchFlipL.size===0)Keys.left=false;}
       if(touchFlipR.has(t.identifier)){touchFlipR.delete(t.identifier); if(touchFlipR.size===0)Keys.right=false;}
       const dy=t.clientY-(touchStartY[t.identifier]||t.clientY);
-      if(dy>20&&GS.running&&!GS.paused&&!ball.active) plunger.release(ball);
-      else if(!touchFlipL.has(t.identifier)&&!touchFlipR.has(t.identifier)&&GS.running&&!GS.paused&&!ball.active) plunger.release(ball);
+      if(dy>20&&GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0) plunger.release(ball);
+      else if(!touchFlipL.has(t.identifier)&&!touchFlipR.has(t.identifier)&&GS.running&&!GS.paused&&!ball.active&&ballReturnTimer===0) plunger.release(ball);
       delete touchStartY[t.identifier];
     }
   },{passive:false});
@@ -1154,8 +1104,9 @@ function update() {
 
   bumpers.forEach(b=>b.tick());
   targets.forEach(t=>t.tick());
+  if(targetActiveTimer>0 && --targetActiveTimer===0) targets.forEach(t=>t.on=false);
   ramps.forEach(r=>r.tick());
-  bonusZones.forEach(z=>z.tick());
+
   kickbacks.forEach(k=>k.tick());
   megaRamp.tick();
   slingshots.forEach(s=>s.tick());
@@ -1197,25 +1148,16 @@ function update() {
         } else {
           megaRamp.collide(ball);
           if(megaRamp.inUse) break;
-          if(ball.x-ball.r<0)  {ball.x=ball.r;   if(!kickbacks[0].tryKick(ball)) ball.vx= Math.abs(ball.vx)*0.65;}
-          if(ball.x+ball.r>W)  {ball.x=W-ball.r; if(!kickbacks[1].tryKick(ball)) ball.vx=-Math.abs(ball.vx)*0.65;}
-          if(ball.y-ball.r<H*0.078){ball.y=H*0.078+ball.r; ball.vy=Math.abs(ball.vy)*0.65;}
+          if(ball.x-ball.r<0)  {ball.x=ball.r;   ball.vx= Math.abs(ball.vx)*0.65;}
+          if(ball.x+ball.r>W)  {ball.x=W-ball.r; ball.vx=-Math.abs(ball.vx)*0.65;}
+          if(ball.y-ball.r<H*0.078){ ball.y=H*0.078+ball.r; if(!kickbacks[0].tryKick(ball)&&!kickbacks[1].tryKick(ball)) ball.vy=Math.abs(ball.vy)*0.65; }
           flippers.forEach(f=>f.collide(ball));
           bumpers.forEach(b=>b.collide(ball));
-          const prevOn=targets.map(t=>t.on);
           targets.forEach(t=>t.collide(ball));
-          targets.forEach((t,i)=>{
-            if(prevOn[i]&&!t.on){
-              kickbacks.forEach(k=>k.recharge());
-              targetHitFrames[i]=GS.frames;
-              if(MULTIBALL_ENABLED&&!multiballActive&&targetHitFrames.every(f=>f>=0&&GS.frames-f<600)) triggerMultiball();
-            }
-          });
           ramps.forEach(r=>r.collide(ball));
           slingshots.forEach(s=>s.collide(ball));
           if(spinner) spinner.collide(ball);
           if(magnet)  magnet.attract(ball);
-          bonusZones.forEach(z=>z.collide(ball));
         }
       }
 
@@ -1250,17 +1192,14 @@ function update() {
       ball2.x+=dx2; ball2.y+=dy2;
       if(ball2.x-ball2.r<0){ball2.x=ball2.r; ball2.vx=Math.abs(ball2.vx)*0.65;}
       if(ball2.x+ball2.r>W){ball2.x=W-ball2.r; ball2.vx=-Math.abs(ball2.vx)*0.65;}
-      if(ball2.y-ball2.r<H*0.078){ball2.y=H*0.078+ball2.r; ball2.vy=Math.abs(ball2.vy)*0.65;}
+      if(ball2.y-ball2.r<H*0.078){ ball2.y=H*0.078+ball2.r; if(!kickbacks[0].tryKick(ball2)&&!kickbacks[1].tryKick(ball2)) ball2.vy=Math.abs(ball2.vy)*0.65; }
       flippers.forEach(f=>f.collide(ball2));
       bumpers.forEach(b=>b.collide(ball2));
-      const prevOn2=targets.map(t=>t.on);
       targets.forEach(t=>t.collide(ball2));
-      targets.forEach((t,i)=>{if(prevOn2[i]&&!t.on)kickbacks.forEach(k=>k.recharge());});
       ramps.forEach(r=>r.collide(ball2));
       slingshots.forEach(s=>s.collide(ball2));
       if(spinner) spinner.collide(ball2);
       if(magnet)  magnet.attract(ball2);
-      bonusZones.forEach(z=>z.collide(ball2));
     }
     if(ball2.active && ball2.y>H+ball2.r*4){ ball2.active=false; multiballActive=false; }
   }
@@ -1308,19 +1247,6 @@ function drawHUD() {
     ctx.beginPath(); ctx.arc(bx,by,hh*.22,0,PI2);
     ctx.fillStyle='#c8d8ff'; ctx.shadowBlur=5; ctx.shadowColor='#88aaff'; ctx.fill();
     ctx.strokeStyle='#00e5ff'; ctx.lineWidth=1.5; ctx.stroke();
-  }
-
-  // Multiplier
-  if(GS.multiplier>1) {
-    ctx.textAlign='center';
-    const pulse=0.8+0.2*Math.sin(Date.now()*.006);
-    ctx.fillStyle=`rgba(255,140,0,${pulse})`; ctx.shadowColor='#ff8c00'; ctx.shadowBlur=12;
-    ctx.font=`bold ${fs*1.1}px Orbitron,monospace`;
-    ctx.fillText(`×${GS.multiplier}`, W*.68, mid);
-    // timer bar
-    const bw=W*.1, frac=GS.multTimer/600;
-    ctx.fillStyle='#ff8c0066'; ctx.fillRect(W*.625, hh*.7, bw, hh*.18);
-    ctx.fillStyle='#ff8c00'; ctx.shadowBlur=0; ctx.fillRect(W*.625, hh*.7, bw*frac, hh*.18);
   }
 
   // High score
@@ -1372,7 +1298,7 @@ function drawHUD() {
     ctx.fillStyle='#ffffff'; ctx.shadowBlur=10; ctx.shadowColor='#fff';
     ctx.textAlign='center'; ctx.textBaseline='middle';
     const py=H*.42-(1-GS.scoreFlash/40)*H*.05;
-    ctx.fillText(`+${GS.scoreFlashVal*GS.multiplier}`,W/2,py);
+    ctx.fillText(`+${GS.scoreFlashVal}`,W/2,py);
     ctx.restore();
   }
 }
@@ -1461,7 +1387,6 @@ function draw() {
   if(magnet)  magnet.draw(ctx);
   if(spinner) spinner.draw(ctx);
   slingshots.forEach(s=>s.draw(ctx));
-  bonusZones.forEach(z=>z.draw(ctx));
   targets.forEach(t=>t.draw(ctx));
   bumpers.forEach(b=>b.draw(ctx));
   flippers.forEach(f=>f.draw(ctx));
@@ -1504,7 +1429,7 @@ function loop() {
 
 function startGame() {
   GS.reset(); GS.running=true;
-  launcherSlide=0; launcherTargetSlide=0; ballReturnTimer=0;
+  launcherSlide=0; launcherTargetSlide=0; ballReturnTimer=0; targetActiveTimer=0;
   multiballActive=false; multiballFlash=0;
   skillShotPending=false; skillShotFlash=0;
   megaCountUp={active:false,remaining:0,perFrame:2000}; fireworks=[];
