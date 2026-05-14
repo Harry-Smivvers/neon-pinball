@@ -914,7 +914,8 @@ class MegaRamp {
 // ═══════════════════════════════════════════════
 const PI2=Math.PI*2;
 const GRAVITY=0.26, FRICTION=0.992, MAX_SPEED=28, PLUNGER_POWER=32;
-const LANE_W_RATIO=0.144; // launcher lane width as fraction of canvas
+const LANE_W_RATIO=0.144;
+const MULTIBALL_ENABLED=false; // set true to enable multiball feature
 
 let W,H,PW,laneW, ball, flippers, bumpers, targets, ramps, bonusZones, plunger, kickbacks;
 const megaRamp = new MegaRamp();
@@ -1207,7 +1208,7 @@ function update() {
             if(prevOn[i]&&!t.on){
               kickbacks.forEach(k=>k.recharge());
               targetHitFrames[i]=GS.frames;
-              if(!multiballActive&&targetHitFrames.every(f=>f>=0&&GS.frames-f<600)) triggerMultiball();
+              if(MULTIBALL_ENABLED&&!multiballActive&&targetHitFrames.every(f=>f>=0&&GS.frames-f<600)) triggerMultiball();
             }
           });
           ramps.forEach(r=>r.collide(ball));
